@@ -33,13 +33,18 @@ class Settings:
 
 
 def _detect_local_fptn_metrics_url() -> str:
+    candidates = detect_local_fptn_metrics_urls()
+    return candidates[0] if candidates else ""
+
+
+def detect_local_fptn_metrics_urls() -> list[str]:
     if not LOCAL_FPTN_COMPOSE_PATH.exists():
-        return ""
+        return []
 
     try:
         compose_body = LOCAL_FPTN_COMPOSE_PATH.read_text(encoding="utf-8")
     except OSError:
-        return ""
+        return []
 
     port_match = re.search(r'^\s*-\s*"(?P<port>\d+):443/tcp"\s*$', compose_body, re.MULTILINE)
     secret_match = re.search(
@@ -48,11 +53,32 @@ def _detect_local_fptn_metrics_url() -> str:
         re.MULTILINE,
     )
     if not port_match or not secret_match:
-        return ""
-    return (
-        f'https://127.0.0.1:{port_match.group("port")}/api/v1/metrics/'
-        f'{secret_match.group("secret")}'
+        return []
+
+    server_match = re.search(
+        r'^\s*SERVER_EXTERNAL_IPS:\s*"(?P<server>[^"]+)"\s*$',
+        compose_body,
+        re.MULTILINE,
     )
+    port = port_match.group("port")
+    secret = secret_match.group("secret")
+    path = f"/api/v1/metrics/{secret}"
+    candidates = [
+        f"https://127.0.0.1:{port}{path}",
+        f"https://localhost:{port}{path}",
+    ]
+    if server_match:
+        for host in [item.strip() for item in server_match.group("server").split(",") if item.strip()]:
+            candidates.append(f"https://{host}:{port}{path}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
 
 
 def load_settings() -> Settings:

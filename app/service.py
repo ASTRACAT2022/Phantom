@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from .config import Settings
+from .config import Settings, detect_local_fptn_metrics_urls
 from .fptn import (
     build_access_link,
     build_access_token,
@@ -909,23 +909,47 @@ class ControlPlaneService:
         conn.commit()
 
     def _load_remote_metrics(self) -> LiveMetrics:
-        if not self.settings.metrics_url:
+        configured_urls = [self.settings.metrics_url] if self.settings.metrics_url else []
+        candidate_urls = configured_urls + [
+            url for url in detect_local_fptn_metrics_urls() if url not in configured_urls
+        ]
+        if not candidate_urls:
             return LiveMetrics(False, 0, 0, 0, {}, {}, "FPTN metrics URL is not configured.")
 
-        try:
-            request_kwargs: dict[str, Any] = {"timeout": 3}
-            parsed_url = urlsplit(self.settings.metrics_url)
-            if parsed_url.scheme == "https" and (
-                self.settings.metrics_insecure_tls or _is_local_hostname(parsed_url.hostname or "")
-            ):
-                request_kwargs["context"] = ssl._create_unverified_context()
+        body = ""
+        selected_url = ""
+        last_error = "Metrics unavailable."
+        local_candidates = set(detect_local_fptn_metrics_urls())
+        for candidate_url in candidate_urls:
+            try:
+                request_kwargs: dict[str, Any] = {"timeout": 3}
+                parsed_url = urlsplit(candidate_url)
+                if parsed_url.scheme == "https" and (
+                    self.settings.metrics_insecure_tls
+                    or _is_local_hostname(parsed_url.hostname or "")
+                    or candidate_url in local_candidates
+                ):
+                    request_kwargs["context"] = ssl._create_unverified_context()
 
-            with urlopen(self.settings.metrics_url, **request_kwargs) as response:
-                body = response.read().decode("utf-8")
-        except URLError as exc:
-            return LiveMetrics(False, 0, 0, 0, {}, {}, f"Metrics unavailable: {exc.reason}")
-        except Exception as exc:  # pragma: no cover - defensive fallback
-            return LiveMetrics(False, 0, 0, 0, {}, {}, f"Metrics unavailable: {exc}")
+                with urlopen(candidate_url, **request_kwargs) as response:
+                    candidate_body = response.read().decode("utf-8")
+            except URLError as exc:
+                last_error = f"Metrics unavailable: {exc.reason}"
+                continue
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                last_error = f"Metrics unavailable: {exc}"
+                continue
+
+            if "fptn_active_sessions" not in candidate_body and "fptn_user_" not in candidate_body:
+                last_error = f"Metrics endpoint did not return FPTN Prometheus data: {candidate_url}"
+                continue
+
+            body = candidate_body
+            selected_url = candidate_url
+            break
+
+        if not body:
+            return LiveMetrics(False, 0, 0, 0, {}, {}, last_error)
 
         active_sessions = 0
         total_incoming = 0
@@ -991,7 +1015,7 @@ class ControlPlaneService:
             total_outgoing,
             dict(per_user),
             dict(per_session),
-            "Live FPTN metrics connected.",
+            f"Live FPTN metrics connected: {selected_url}",
         )
 
     def _derive_node_status(self, node: dict[str, Any]) -> str:
