@@ -50,6 +50,32 @@ sudo bash -s -- \
 
 Этот bootstrap-скрипт сам скачает `agent.py`, `phantom-node-controller.service` и `auto-deploy.sh` из GitHub, после чего поставит сервис.
 
+## Полный прод-деплой FPTN + node-controller
+
+Если хочешь не только agent, а сразу полноценную ноду с поднятием `FPTN`, используй full-stack installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-fptn-node.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
+  --region Amsterdam \
+  --tier public \
+  --proxy-domain vk.ru \
+  --open-ufw
+```
+
+Этот сценарий:
+
+- ставит Docker и openssl на apt-based Linux;
+- поднимает `FPTN` через Docker;
+- генерирует `server.crt` и `server.key`;
+- открывает порт в `ufw`, если он активен;
+- ставит `node-controller` и сразу подключает ноду к панели.
+
 ## gRPC transport
 
 По умолчанию агент ходит в панель по HTTP. Если хочешь вынести heartbeat/config/deregister в отдельный gRPC listener панели на произвольном порту, можно установить ноду так:

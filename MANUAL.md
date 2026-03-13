@@ -294,6 +294,24 @@ sudo bash auto-deploy.sh \
   --region Amsterdam
 ```
 
+Полный прод-деплой новой ноды с `FPTN` и `node-controller`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-fptn-node.sh | \
+sudo bash -s -- \
+  --panel-url http://SERVER_IP:8000 \
+  --shared-token my-node-token \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
+  --region Amsterdam \
+  --tier public \
+  --proxy-domain vk.ru \
+  --open-ufw
+```
+
+Эти же команды теперь можно генерировать прямо в панели на странице `Nodes` через мастер `+ Новая прод-нода`.
+
 Если нужно удалить старую запись ноды и зарегистрировать её заново с новым IP:
 
 ```bash

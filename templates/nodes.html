@@ -5,12 +5,144 @@
     {% include "_flash.html" %}
     {% include "_accuracy.html" %}
 
+    <details class="panel-card deploy-card" open>
+      <summary class="deploy-launcher">
+        <div class="flex items-center gap-4">
+          <span class="plus-badge">+</span>
+          <div>
+            <h2 class="panel-title">Новая прод-нода</h2>
+            <p class="panel-subtitle">
+              Заполни данные и сразу получи готовую команду деплоя: полный FPTN stack, node-controller или redeploy.
+            </p>
+          </div>
+        </div>
+        <span class="pill pill-dark">Deploy Wizard</span>
+      </summary>
+
+      <div class="mt-6 grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+        <section class="space-y-4">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Panel URL</span>
+              <input class="input" id="deploy-panel-url" type="text" value="{{ node_deploy.panel_url }}" />
+            </label>
+            <label class="field">
+              <span>Transport</span>
+              <select class="input" id="deploy-transport">
+                <option value="http" {{ 'selected' if node_deploy.default_transport == 'http' else '' }}>http</option>
+                <option value="grpc" {{ 'selected' if node_deploy.default_transport == 'grpc' else '' }}>grpc</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Node Name</span>
+              <input class="input" id="deploy-node-name" type="text" value="Edge AMS-01" />
+            </label>
+            <label class="field">
+              <span>Node Host / Public IP</span>
+              <input class="input" id="deploy-node-host" type="text" placeholder="138.124.106.133" />
+            </label>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>FPTN Port</span>
+              <input class="input" id="deploy-node-port" type="number" min="1" max="65535" value="{{ node_defaults.port }}" />
+            </label>
+            <label class="field">
+              <span>Region</span>
+              <input class="input" id="deploy-region" type="text" value="{{ node_defaults.region if node_defaults.region != 'Unassigned' else 'Amsterdam' }}" />
+            </label>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Tier</span>
+              <select class="input" id="deploy-tier">
+                <option value="public" {{ 'selected' if node_defaults.tier == 'public' else '' }}>public</option>
+                <option value="premium" {{ 'selected' if node_defaults.tier == 'premium' else '' }}>premium</option>
+                <option value="censored" {{ 'selected' if node_defaults.tier == 'censored' else '' }}>censored</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Proxy Domain</span>
+              <input class="input" id="deploy-proxy-domain" type="text" value="{{ node_deploy.default_proxy_domain }}" />
+            </label>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>gRPC target</span>
+              <input class="input font-mono" id="deploy-grpc-target" type="text" value="{{ node_deploy.grpc_target }}" />
+            </label>
+            <label class="field">
+              <span>Agent ID</span>
+              <input class="input" id="deploy-agent-id" type="text" placeholder="hostname или оставь пустым" />
+            </label>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="toggle-row">
+              <input id="deploy-replace-existing" type="checkbox" />
+              <span>Replace old node registration</span>
+            </label>
+            <label class="toggle-row">
+              <input id="deploy-open-ufw" type="checkbox" checked />
+              <span>Open UFW port automatically</span>
+            </label>
+          </div>
+
+          <div class="notice-card">
+            Панель уже подставляет текущий `NODE_CONTROLLER_SHARED_TOKEN` и знает, включён ли `gRPC`.
+            Для agent-ноды ручное добавление в таблицу не нужно: после heartbeat она появится сама.
+          </div>
+        </section>
+
+        <section class="space-y-4">
+          <article class="code-card">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 class="panel-title">Полный прод-деплой ноды</h3>
+                <p class="panel-subtitle">Поднимает Docker/FPTN, сертификат и потом ставит node-controller.</p>
+              </div>
+              <button class="btn btn-secondary btn-xs" type="button" onclick="copyCommandText('full-stack-command')">Скопировать</button>
+            </div>
+            <textarea class="code-output" id="full-stack-command" rows="9" readonly></textarea>
+          </article>
+
+          <article class="code-card">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 class="panel-title">Только node-controller</h3>
+                <p class="panel-subtitle">Если сам FPTN уже поднят отдельно, ставим только heartbeat-агент.</p>
+              </div>
+              <button class="btn btn-ghost btn-xs" type="button" onclick="copyCommandText('agent-only-command')">Скопировать</button>
+            </div>
+            <textarea class="code-output" id="agent-only-command" rows="7" readonly></textarea>
+          </article>
+
+          <article class="code-card">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 class="panel-title">Redeploy / Replace</h3>
+                <p class="panel-subtitle">Используй, когда IP или host у ноды уже менялся.</p>
+              </div>
+              <button class="btn btn-ghost btn-xs" type="button" onclick="copyCommandText('redeploy-command')">Скопировать</button>
+            </div>
+            <textarea class="code-output" id="redeploy-command" rows="7" readonly></textarea>
+          </article>
+        </section>
+      </div>
+    </details>
+
     <section class="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
       <section class="panel-card">
         <div class="mb-4">
-          <h2 class="panel-title">Добавить edge-узел</h2>
+          <h2 class="panel-title">Ручное добавление</h2>
           <p class="panel-subtitle">
-            Ручное добавление инфраструктуры осталось, но live heartbeat теперь видно отдельно.
+            Нужен только для legacy/manual узлов. Для node-controller это уже не обязательно.
           </p>
         </div>
         <form action="/actions/nodes" method="post" class="space-y-3">
@@ -46,7 +178,7 @@
             <span>MD5 fingerprint</span>
             <input class="input font-mono" type="text" name="md5_fingerprint" placeholder="a5bc..." />
           </label>
-          <button class="btn btn-secondary w-full" type="submit">Добавить узел</button>
+          <button class="btn btn-secondary w-full" type="submit">Добавить узел вручную</button>
         </form>
       </section>
 
@@ -81,4 +213,113 @@
       {% include "_nodes_grid.html" %}
     </section>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const nodeDeploy = {{ json_dumps(node_deploy) | safe }};
+
+    function shellQuote(value) {
+      const normalized = String(value ?? "").trim();
+      if (!normalized) return "''";
+      return `'${normalized.replace(/'/g, `'\"'\"'`)}'`;
+    }
+
+    function buildDeployCommands() {
+      const panelUrl = document.getElementById("deploy-panel-url").value.trim() || nodeDeploy.panel_url;
+      const nodeName = document.getElementById("deploy-node-name").value.trim() || "Edge Node";
+      const nodeHost = document.getElementById("deploy-node-host").value.trim() || "NODE_PUBLIC_IP";
+      const nodePort = document.getElementById("deploy-node-port").value.trim() || "{{ node_defaults.port }}";
+      const region = document.getElementById("deploy-region").value.trim() || "Unassigned";
+      const tier = document.getElementById("deploy-tier").value.trim() || "public";
+      const transport = document.getElementById("deploy-transport").value.trim() || nodeDeploy.default_transport;
+      const grpcTarget = document.getElementById("deploy-grpc-target").value.trim() || nodeDeploy.grpc_target;
+      const proxyDomain = document.getElementById("deploy-proxy-domain").value.trim() || nodeDeploy.default_proxy_domain;
+      const agentId = document.getElementById("deploy-agent-id").value.trim();
+      const replaceExisting = document.getElementById("deploy-replace-existing").checked;
+      const openUfw = document.getElementById("deploy-open-ufw").checked;
+
+      const commonArgs = [
+        `--panel-url ${shellQuote(panelUrl)}`,
+        `--shared-token ${shellQuote(nodeDeploy.node_token)}`,
+        `--node-name ${shellQuote(nodeName)}`,
+        `--node-host ${shellQuote(nodeHost)}`,
+        `--node-port ${shellQuote(nodePort)}`,
+        `--region ${shellQuote(region)}`,
+        `--tier ${shellQuote(tier)}`,
+      ];
+
+      if (transport === "grpc") {
+        commonArgs.splice(2, 0, `--transport grpc`);
+        commonArgs.splice(3, 0, `--grpc-target ${shellQuote(grpcTarget)}`);
+      }
+      if (agentId) {
+        commonArgs.push(`--agent-id ${shellQuote(agentId)}`);
+      }
+
+      const replaceArgs = replaceExisting ? ["--replace-existing"] : [];
+      const firewallArgs = openUfw ? ["--open-ufw"] : [];
+      const fullStackArgs = [
+        ...commonArgs,
+        `--proxy-domain ${shellQuote(proxyDomain)}`,
+        ...replaceArgs,
+        ...firewallArgs,
+      ];
+
+      const fullStack = [
+        `curl -fsSL ${nodeDeploy.full_stack_installer_url} | \\`,
+        `sudo bash -s -- \\`,
+        `  ${fullStackArgs.join(" \\\n  ")}`
+      ].join("\n");
+
+      const agentOnly = [
+        `curl -fsSL ${nodeDeploy.agent_installer_url} | \\`,
+        `sudo bash -s -- \\`,
+        `  ${commonArgs.join(" \\\n  ")}`
+      ].join("\n");
+
+      const redeployArgs = [...commonArgs, "--replace-existing"];
+      const redeploy = [
+        `curl -fsSL ${nodeDeploy.agent_installer_url} | \\`,
+        `sudo bash -s -- \\`,
+        `  ${redeployArgs.join(" \\\n  ")}`
+      ].join("\n");
+
+      document.getElementById("full-stack-command").value = fullStack;
+      document.getElementById("agent-only-command").value = agentOnly;
+      document.getElementById("redeploy-command").value = redeploy;
+    }
+
+    function copyCommandText(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      copyText(el.value);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const watchedIds = [
+        "deploy-panel-url",
+        "deploy-node-name",
+        "deploy-node-host",
+        "deploy-node-port",
+        "deploy-region",
+        "deploy-tier",
+        "deploy-transport",
+        "deploy-grpc-target",
+        "deploy-proxy-domain",
+        "deploy-agent-id",
+        "deploy-replace-existing",
+        "deploy-open-ufw",
+      ];
+
+      for (const id of watchedIds) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.addEventListener("input", buildDeployCommands);
+        el.addEventListener("change", buildDeployCommands);
+      }
+
+      buildDeployCommands();
+    });
+  </script>
 {% endblock %}

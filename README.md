@@ -123,6 +123,24 @@ sudo bash -s -- \
   --region Amsterdam
 ```
 
+Если нужен сразу полный прод-деплой новой ноды с `FPTN` и `node-controller`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-fptn-node.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
+  --region Amsterdam \
+  --tier public \
+  --proxy-domain vk.ru \
+  --open-ufw
+```
+
+А ещё этот же flow теперь есть прямо в панели на странице `Nodes`: кнопка `+ Новая прод-нода` генерирует готовые команды деплоя под текущий token, panel URL и transport.
+
 One-shot деплой ноды:
 
 ```bash

@@ -34,6 +34,11 @@ templates.env.globals["json_dumps"] = json.dumps
 app.state.node_agent_grpc_server = None
 
 SESSION_TTL_SECONDS = 60 * 60 * 12
+PHANTOM_GITHUB_REPO = "ASTRACAT2022/Phantom"
+PHANTOM_GITHUB_REF = "main"
+PHANTOM_NODE_CONTROLLER_RAW_BASE = (
+    f"https://raw.githubusercontent.com/{PHANTOM_GITHUB_REPO}/{PHANTOM_GITHUB_REF}/node-controller"
+)
 
 
 class BillingLookupPayload(BaseModel):
@@ -201,6 +206,32 @@ def redirect_back(
     return RedirectResponse(url=_flash_url(fallback, message, level), status_code=303)
 
 
+def panel_base_url(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+def node_deploy_context(request: Request) -> dict[str, object]:
+    panel_url = panel_base_url(request)
+    panel_host = request.url.hostname or "SERVER_IP"
+    default_transport = "grpc" if settings.node_agent_grpc_enabled else "http"
+    grpc_target = f"{panel_host}:{settings.node_agent_grpc_port}"
+    return {
+        "panel_url": panel_url,
+        "panel_host": panel_host,
+        "node_token": settings.node_agent_token,
+        "default_transport": default_transport,
+        "grpc_enabled": settings.node_agent_grpc_enabled,
+        "grpc_port": settings.node_agent_grpc_port,
+        "grpc_target": grpc_target,
+        "repo_slug": PHANTOM_GITHUB_REPO,
+        "repo_ref": PHANTOM_GITHUB_REF,
+        "agent_installer_url": f"{PHANTOM_NODE_CONTROLLER_RAW_BASE}/install-via-github.sh",
+        "full_stack_installer_url": f"{PHANTOM_NODE_CONTROLLER_RAW_BASE}/install-fptn-node.sh",
+        "default_proxy_domain": "vk.ru",
+        "fptn_image": "fptnvpn/fptn-vpn-server:latest",
+    }
+
+
 def render_page(
     request: Request,
     template_name: str,
@@ -222,6 +253,8 @@ def render_page(
             "nav_items": nav_items(),
         }
     )
+    if page_key == "nodes":
+        context["node_deploy"] = node_deploy_context(request)
     return templates.TemplateResponse(template_name, context)
 
 
