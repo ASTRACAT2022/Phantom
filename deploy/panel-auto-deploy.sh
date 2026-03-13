@@ -23,6 +23,10 @@ FPTN_SERVICE_NAME="PHANTOM.NET"
 FPTN_PROMETHEUS_METRICS_URL=""
 NODE_CONTROLLER_SHARED_TOKEN=""
 BILLING_API_TOKEN=""
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD=""
+ADMIN_SESSION_SECRET=""
+SESSION_COOKIE_SECURE="false"
 PHANTOM_SEED_DEMO="false"
 PANEL_TIMEZONE="Europe/Moscow"
 PHANTOM_BACKUP_DIR="/var/backups/phantom-control-plane"
@@ -45,6 +49,9 @@ Options:
   --metrics-url URL
   --node-token TOKEN
   --billing-token TOKEN
+  --admin-username USER
+  --admin-password PASS
+  --session-cookie-secure true|false
   --seed-demo true|false
   --timezone TZ
   --backup-dir PATH
@@ -120,6 +127,18 @@ parse_args() {
         ;;
       --billing-token)
         BILLING_API_TOKEN="$2"
+        shift 2
+        ;;
+      --admin-username)
+        ADMIN_USERNAME="$2"
+        shift 2
+        ;;
+      --admin-password)
+        ADMIN_PASSWORD="$2"
+        shift 2
+        ;;
+      --session-cookie-secure)
+        SESSION_COOKIE_SECURE="$2"
         shift 2
         ;;
       --seed-demo)
@@ -212,6 +231,12 @@ write_env_file() {
   if [[ -z "${BILLING_API_TOKEN}" ]]; then
     BILLING_API_TOKEN="$(random_token)"
   fi
+  if [[ -z "${ADMIN_PASSWORD}" ]]; then
+    ADMIN_PASSWORD="$(random_token)"
+  fi
+  if [[ -z "${ADMIN_SESSION_SECRET}" ]]; then
+    ADMIN_SESSION_SECRET="$(random_token)"
+  fi
 
   if [[ ! -f "${ENV_FILE}" ]]; then
     install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${ENV_FILE}"
@@ -225,6 +250,10 @@ write_env_file() {
   set_env_var "FPTN_PROMETHEUS_METRICS_URL" "${FPTN_PROMETHEUS_METRICS_URL}"
   set_env_var "NODE_CONTROLLER_SHARED_TOKEN" "${NODE_CONTROLLER_SHARED_TOKEN}"
   set_env_var "BILLING_API_TOKEN" "${BILLING_API_TOKEN}"
+  set_env_var "ADMIN_USERNAME" "${ADMIN_USERNAME}"
+  set_env_var "ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
+  set_env_var "ADMIN_SESSION_SECRET" "${ADMIN_SESSION_SECRET}"
+  set_env_var "SESSION_COOKIE_SECURE" "${SESSION_COOKIE_SECURE}"
   set_env_var "PHANTOM_SEED_DEMO" "${PHANTOM_SEED_DEMO}"
   set_env_var "PANEL_TIMEZONE" "${PANEL_TIMEZONE}"
   set_env_var "PANEL_HOST" "${PANEL_HOST}"
@@ -266,6 +295,10 @@ Env file:
 Tokens:
   NODE_CONTROLLER_SHARED_TOKEN=${NODE_CONTROLLER_SHARED_TOKEN}
   BILLING_API_TOKEN=${BILLING_API_TOKEN}
+
+Admin:
+  username=${ADMIN_USERNAME}
+  password=${ADMIN_PASSWORD}
 
 Backups:
   dir=${PHANTOM_BACKUP_DIR}

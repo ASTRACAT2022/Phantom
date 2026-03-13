@@ -91,6 +91,9 @@ FPTN_SERVICE_NAME="PHANTOM.NET"
 FPTN_PROMETHEUS_METRICS_URL=""
 NODE_CONTROLLER_SHARED_TOKEN="phantom-node-shared-token"
 BILLING_API_TOKEN="phantom-billing-token"
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD="admin-change-me"
+SESSION_COOKIE_SECURE="false"
 PHANTOM_SEED_DEMO="false"
 PANEL_TIMEZONE="Europe/Moscow"
 PANEL_HOST="0.0.0.0"
@@ -104,6 +107,9 @@ PANEL_PORT="8000"
 - `FPTN_CONFIG_DIR` - куда панель пишет конфиги для `FPTN`;
 - `NODE_CONTROLLER_SHARED_TOKEN` - токен для heartbeat от нод;
 - `BILLING_API_TOKEN` - токен для внешнего биллинга;
+- `ADMIN_USERNAME` - логин администратора панели;
+- `ADMIN_PASSWORD` - пароль администратора панели;
+- `SESSION_COOKIE_SECURE` - включить secure-cookie при работе за HTTPS;
 - `PHANTOM_SEED_DEMO=false` обязательно для production.
 
 Рекомендуемый production вариант:
@@ -116,6 +122,12 @@ DATABASE_URL="postgresql://phantom:strongpass@127.0.0.1:5432/phantom"
 
 - если `DATABASE_URL` задан и начинается с `postgresql://` или `postgres://`, используется `PostgreSQL`;
 - если `DATABASE_URL` пустой, используется `SQLite`.
+
+Доступ к панели:
+
+- HTML-панель защищена admin login;
+- `/docs` тоже защищён admin login;
+- billing API и node-agent API используют свои bearer tokens отдельно.
 
 ## 8. Что пишет панель в FPTN
 
@@ -195,6 +207,14 @@ sudo bash easy-deploy.sh \
   --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom
 ```
 
+Если нужно сразу задать admin user:
+
+```bash
+sudo bash easy-deploy.sh \
+  --admin-username admin \
+  --admin-password strong-admin-password
+```
+
 Скрипт:
 
 - вызывает production deploy панели;
@@ -227,6 +247,7 @@ sudo bash deploy/panel-auto-deploy.sh \
 - создаёт `/var/lib/phantom-control-plane`;
 - ставит `systemd` unit;
 - включает автозапуск сервиса.
+- генерирует admin password, если он не был передан явно.
 
 Важные файлы:
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import secrets
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -16,6 +17,11 @@ class Settings:
     metrics_url: str
     node_agent_token: str
     billing_api_token: str
+    admin_username: str
+    admin_password: str
+    admin_session_secret: str
+    session_cookie_name: str
+    session_cookie_secure: bool
     seed_demo: bool
     timezone: str
 
@@ -34,6 +40,11 @@ def load_settings() -> Settings:
         metrics_url=os.getenv("FPTN_PROMETHEUS_METRICS_URL", "").strip(),
         node_agent_token=os.getenv("NODE_CONTROLLER_SHARED_TOKEN", "phantom-node-shared-token"),
         billing_api_token=os.getenv("BILLING_API_TOKEN", "phantom-billing-token"),
+        admin_username=os.getenv("ADMIN_USERNAME", "admin").strip() or "admin",
+        admin_password=os.getenv("ADMIN_PASSWORD", "admin-change-me"),
+        admin_session_secret=os.getenv("ADMIN_SESSION_SECRET", secrets.token_urlsafe(32)),
+        session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "phantom_admin_session"),
+        session_cookie_secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
         seed_demo=os.getenv("PHANTOM_SEED_DEMO", "true").lower() == "true",
         timezone=os.getenv("PANEL_TIMEZONE", "Europe/Moscow"),
     )

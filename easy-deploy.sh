@@ -13,6 +13,9 @@ METRICS_URL=""
 TIMEZONE="Europe/Moscow"
 SEED_DEMO="false"
 DATABASE_URL=""
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD=""
+SESSION_COOKIE_SECURE="false"
 
 usage() {
   cat <<'EOF'
@@ -27,6 +30,9 @@ Options:
   --public-ip IP
   --node-token TOKEN
   --billing-token TOKEN
+  --admin-username USER
+  --admin-password PASS
+  --session-cookie-secure true|false
   --metrics-url URL
   --database-url URL
   --timezone TZ
@@ -79,6 +85,18 @@ parse_args() {
         ;;
       --billing-token)
         BILLING_TOKEN="$2"
+        shift 2
+        ;;
+      --admin-username)
+        ADMIN_USERNAME="$2"
+        shift 2
+        ;;
+      --admin-password)
+        ADMIN_PASSWORD="$2"
+        shift 2
+        ;;
+      --session-cookie-secure)
+        SESSION_COOKIE_SECURE="$2"
         shift 2
         ;;
       --metrics-url)
@@ -147,6 +165,15 @@ main() {
   fi
   if [[ -n "${BILLING_TOKEN}" ]]; then
     CMD+=(--billing-token "${BILLING_TOKEN}")
+  fi
+  if [[ -n "${ADMIN_USERNAME}" ]]; then
+    CMD+=(--admin-username "${ADMIN_USERNAME}")
+  fi
+  if [[ -n "${ADMIN_PASSWORD}" ]]; then
+    CMD+=(--admin-password "${ADMIN_PASSWORD}")
+  fi
+  if [[ -n "${SESSION_COOKIE_SECURE}" ]]; then
+    CMD+=(--session-cookie-secure "${SESSION_COOKIE_SECURE}")
   fi
   if [[ -n "${METRICS_URL}" ]]; then
     CMD+=(--metrics-url "${METRICS_URL}")

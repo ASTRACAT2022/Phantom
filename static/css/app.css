@@ -234,6 +234,11 @@ pre,
   border: 1px solid rgba(239, 68, 68, 0.18);
 }
 
+.btn-xs {
+  padding: 0.42rem 0.7rem;
+  font-size: 0.76rem;
+}
+
 .field {
   display: flex;
   flex-direction: column;

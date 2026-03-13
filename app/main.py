@@ -1,12 +1,20 @@
+import base64
+import hashlib
+import hmac
 import json
-from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
+import secrets
+import time
 from typing import Optional
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 
 from fastapi import FastAPI, Form, Header, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import BASE_DIR, load_settings
 from .service import ControlPlaneService, format_datetime, human_bytes
@@ -16,12 +24,14 @@ settings = load_settings()
 service = ControlPlaneService(settings)
 service.initialize()
 
-app = FastAPI(title=settings.app_name)
+app = FastAPI(title=settings.app_name, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.filters["datetime"] = format_datetime
 templates.env.filters["bytes"] = human_bytes
 templates.env.globals["json_dumps"] = json.dumps
+
+SESSION_TTL_SECONDS = 60 * 60 * 12
 
 
 class BillingLookupPayload(BaseModel):
@@ -75,6 +85,86 @@ def _flash_url(url: str, message: str, level: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
+def _session_signature(username: str, expires_at: int) -> str:
+    payload = f"{username}:{expires_at}".encode("utf-8")
+    return hmac.new(
+        settings.admin_session_secret.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def create_session_token(username: str) -> str:
+    expires_at = int(time.time()) + SESSION_TTL_SECONDS
+    signature = _session_signature(username, expires_at)
+    payload = f"{username}:{expires_at}:{signature}"
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("utf-8")
+
+
+def decode_session_token(token: str) -> Optional[str]:
+    try:
+        payload = base64.urlsafe_b64decode(token.encode("utf-8")).decode("utf-8")
+        username, expires_at_raw, signature = payload.split(":", 2)
+        expires_at = int(expires_at_raw)
+    except Exception:
+        return None
+
+    if expires_at < int(time.time()):
+        return None
+
+    expected = _session_signature(username, expires_at)
+    if not hmac.compare_digest(signature, expected):
+        return None
+    return username
+
+
+def current_admin_username(request: Request) -> Optional[str]:
+    token = request.cookies.get(settings.session_cookie_name, "")
+    if not token:
+        return None
+    return decode_session_token(token)
+
+
+def login_redirect(request: Request) -> RedirectResponse:
+    next_path = request.url.path
+    if request.url.query:
+        next_path = f"{next_path}?{request.url.query}"
+    return RedirectResponse(url=f"/login?next={quote_plus(next_path)}", status_code=303)
+
+
+def safe_next_path(value: str) -> str:
+    candidate = (value or "/dashboard").strip()
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        return "/dashboard"
+    return candidate
+
+
+class AdminSessionMiddleware(BaseHTTPMiddleware):
+    exempt_prefixes = (
+        "/static/",
+        "/health",
+        "/login",
+        "/api/node-agent/",
+        "/api/v1/billing/",
+    )
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path != "/" and not any(
+            request.url.path.startswith(prefix) for prefix in self.exempt_prefixes
+        ):
+            if current_admin_username(request) is None:
+                return login_redirect(request)
+
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        return response
+
+
+app.add_middleware(AdminSessionMiddleware)
+
+
 def redirect_back(
     request: Request,
     message: str,
@@ -85,14 +175,8 @@ def redirect_back(
     if referer:
         referer_parts = urlsplit(referer)
         if referer_parts.netloc == request.url.netloc:
-            return RedirectResponse(
-                url=_flash_url(referer, message, level),
-                status_code=303,
-            )
-    return RedirectResponse(
-        url=_flash_url(fallback, message, level),
-        status_code=303,
-    )
+            return RedirectResponse(url=_flash_url(referer, message, level), status_code=303)
+    return RedirectResponse(url=_flash_url(fallback, message, level), status_code=303)
 
 
 def render_page(
@@ -107,6 +191,7 @@ def render_page(
         {
             "request": request,
             "app_name": settings.app_name,
+            "admin_username": current_admin_username(request),
             "flash_message": request.query_params.get("message", ""),
             "flash_level": request.query_params.get("level", "success"),
             "page_key": page_key,
@@ -118,9 +203,61 @@ def render_page(
     return templates.TemplateResponse(template_name, context)
 
 
+def render_login_page(request: Request, error_message: str = "") -> HTMLResponse:
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "app_name": settings.app_name,
+            "page_title": "Admin Login",
+            "error_message": error_message,
+            "next_path": safe_next_path(request.query_params.get("next", "/dashboard")),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> RedirectResponse:
     return RedirectResponse(url="/dashboard", status_code=303)
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request) -> HTMLResponse:
+    if current_admin_username(request):
+        return RedirectResponse(url="/dashboard", status_code=303)
+    return render_login_page(request)
+
+
+@app.post("/login")
+async def login_submit(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next_path: str = Form(default="/dashboard"),
+) -> Response:
+    valid_username = secrets.compare_digest(username.strip(), settings.admin_username)
+    valid_password = secrets.compare_digest(password, settings.admin_password)
+    if not (valid_username and valid_password):
+        return render_login_page(request, error_message="Неверный логин или пароль.")
+
+    response = RedirectResponse(url=safe_next_path(next_path), status_code=303)
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=create_session_token(settings.admin_username),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=settings.session_cookie_secure,
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout() -> RedirectResponse:
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(settings.session_cookie_name)
+    return response
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -327,11 +464,7 @@ async def update_speed_policy(
 ) -> RedirectResponse:
     try:
         service.update_speed_policy(unlimited_profile_mbps)
-        return redirect_back(
-            request,
-            "Full speed profile updated.",
-            fallback="/settings",
-        )
+        return redirect_back(request, "Full speed profile updated.", fallback="/settings")
     except Exception as exc:
         return redirect_back(request, str(exc), level="error", fallback="/settings")
 
@@ -448,13 +581,7 @@ async def billing_access_key(
         payload = service.get_billing_user(username=username)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return JSONResponse(
-        {
-            "ok": True,
-            "username": payload["username"],
-            "access_key": payload["access_key"],
-        }
-    )
+    return JSONResponse({"ok": True, "username": payload["username"], "access_key": payload["access_key"]})
 
 
 @app.post("/api/v1/billing/users/upsert")
@@ -549,3 +676,17 @@ async def billing_access_key_rotate(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "app": settings.app_name}
+
+
+@app.get("/openapi.json")
+async def openapi_json(request: Request) -> JSONResponse:
+    if current_admin_username(request) is None:
+        raise HTTPException(status_code=401, detail="Unauthorized.")
+    return JSONResponse(get_openapi(title=app.title, version="1.0.0", routes=app.routes))
+
+
+@app.get("/docs", response_class=HTMLResponse)
+async def swagger_docs(request: Request) -> HTMLResponse:
+    if current_admin_username(request) is None:
+        return login_redirect(request)
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{settings.app_name} Docs")

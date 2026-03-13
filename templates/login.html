@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ page_title }} · {{ app_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Manrope", "sans-serif"],
+              mono: ["JetBrains Mono", "monospace"],
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="stylesheet" href="{{ request.url_for('static', path='css/app.css') }}" />
+  </head>
+  <body class="min-h-screen text-slate-900 antialiased">
+    <div class="background-mesh"></div>
+    <main class="relative z-10 flex min-h-screen items-center justify-center px-4 py-10">
+      <section class="w-full max-w-md rounded-[28px] border border-white/70 bg-white/92 p-8 shadow-panel backdrop-blur">
+        <div class="space-y-3">
+          <span class="pill pill-ghost">Protected Admin Panel</span>
+          <h1 class="text-3xl font-extrabold tracking-tight">{{ app_name }}</h1>
+          <p class="text-sm leading-6 text-slate-600">
+            Войди как администратор, чтобы открыть панель, actions и документацию API.
+          </p>
+        </div>
+
+        {% if error_message %}
+          <div class="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {{ error_message }}
+          </div>
+        {% endif %}
+
+        <form action="/login" method="post" class="mt-6 space-y-4">
+          <input type="hidden" name="next_path" value="{{ next_path }}" />
+          <label class="field">
+            <span>Admin Username</span>
+            <input class="input" type="text" name="username" value="admin" required />
+          </label>
+          <label class="field">
+            <span>Admin Password</span>
+            <input class="input" type="password" name="password" autocomplete="current-password" required />
+          </label>
+          <button class="btn btn-primary w-full" type="submit">Войти в панель</button>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

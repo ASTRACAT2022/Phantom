@@ -43,6 +43,9 @@ FPTN_SERVICE_NAME="PHANTOM.NET"
 FPTN_PROMETHEUS_METRICS_URL=""
 NODE_CONTROLLER_SHARED_TOKEN="phantom-node-shared-token"
 BILLING_API_TOKEN="phantom-billing-token"
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD="admin-change-me"
+SESSION_COOKIE_SECURE="false"
 PHANTOM_SEED_DEMO="true"
 PANEL_TIMEZONE="Europe/Moscow"
 PANEL_HOST="0.0.0.0"
@@ -56,6 +59,9 @@ DATABASE_URL="postgresql://phantom:strongpass@127.0.0.1:5432/phantom"
 ```
 
 Если `DATABASE_URL` не задан, панель продолжит работать на `SQLite`.
+
+HTML-панель и `/docs` теперь закрыты admin-auth. После deploy вход выполняется через `/login`.
+Если панель стоит за HTTPS reverse proxy, включи `SESSION_COOKIE_SECURE=true`.
 
 ## Что появится в `FPTN_CONFIG_DIR`
 
@@ -132,6 +138,14 @@ sudo bash easy-deploy.sh \
   --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom
 ```
 
+Можно сразу передать admin-логин:
+
+```bash
+sudo bash easy-deploy.sh \
+  --admin-username admin \
+  --admin-password strong-admin-password
+```
+
 Этот скрипт сам вызывает production deploy, подсказывает адрес панели и показывает, где смотреть сервис.
 
 На Linux-сервере:
@@ -156,6 +170,7 @@ sudo bash deploy/panel-auto-deploy.sh \
 - выводит URL панели и токены для node-controller и billing API.
 
 Если указан `DATABASE_URL`, панель будет использовать `PostgreSQL`. Если нет, будет использоваться `SQLite`.
+После deploy панель выводит admin username/password для первого входа.
 
 Для совсем простого запуска используй [easy-deploy.sh](/Users/astracat/Documents/Phantom/easy-deploy.sh), а если нужен полный контроль над путями и env, используй [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh).
 
@@ -203,6 +218,7 @@ systemctl list-timers | grep phantom-backup
 Для интеграции с биллингом панель теперь умеет отдельный JSON API с bearer-токеном `BILLING_API_TOKEN`. Документация также доступна через FastAPI Swagger:
 
 - `http://IP:PORT/docs`
+  Документация теперь тоже требует admin login через cookie-сессию.
 
 Основные endpoints:
 

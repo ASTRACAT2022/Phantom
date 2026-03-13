@@ -79,6 +79,14 @@
               <p class="mt-3 text-xs leading-5 text-slate-600">
                 Последняя синхронизация: <strong>{{ last_sync_at }}</strong>
               </p>
+              {% if admin_username %}
+                <div class="mt-4 flex items-center justify-between gap-3 text-xs text-slate-600">
+                  <span>admin: <strong>{{ admin_username }}</strong></span>
+                  <form action="/logout" method="post">
+                    <button class="btn btn-ghost btn-xs" type="submit">Выйти</button>
+                  </form>
+                </div>
+              {% endif %}
             </div>
           </div>
         </aside>
