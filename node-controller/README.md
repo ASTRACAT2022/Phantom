@@ -74,6 +74,7 @@ sudo bash -s -- \
 
 - ставит Docker и openssl на apt-based Linux;
 - поднимает `FPTN` через Docker;
+- поднимает локальный `fptn-proxy-server` для Prometheus-метрик;
 - генерирует `server.crt` и `server.key`;
 - настраивает upstream DNS для `FPTN`;
 - открывает порт в `ufw`, если он активен;

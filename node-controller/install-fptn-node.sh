@@ -20,8 +20,10 @@ PROXY_DOMAIN="${FPTN_DEFAULT_PROXY_DOMAIN:-vk.ru}"
 DNS_IPV4_PRIMARY="${FPTN_DNS_IPV4_PRIMARY:-77.239.113.0}"
 DNS_IPV4_SECONDARY="${FPTN_DNS_IPV4_SECONDARY:-108.165.164.201}"
 FPTN_IMAGE="${FPTN_SERVER_IMAGE:-fptnvpn/fptn-vpn-server:latest}"
+FPTN_PROXY_IMAGE="${FPTN_PROXY_IMAGE:-fptnvpn/fptn-proxy-server}"
 FPTN_DIR="${FPTN_SERVER_DIR:-/opt/fptn-server}"
 FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/opt/fptn-server-data}"
+FPTN_PROXY_PORT="${FPTN_PROXY_PORT:-18080}"
 ALLOWED_SNI_LIST="${FPTN_ALLOWED_SNI_LIST:-}"
 PROMETHEUS_SECRET_ACCESS_KEY="${FPTN_PROMETHEUS_SECRET_ACCESS_KEY:-}"
 REMOTE_SERVER_AUTH_HOST="${FPTN_REMOTE_SERVER_AUTH_HOST:-127.0.0.1}"
@@ -71,8 +73,10 @@ Optional:
   --max-sessions COUNT       Default: 3
   --metrics-url URL          Forwarded to node-controller as LOCAL_FPTN_METRICS_URL
   --fptn-image IMAGE         Docker image, default: fptnvpn/fptn-vpn-server:latest
+  --fptn-proxy-image IMAGE   Docker image, default: fptnvpn/fptn-proxy-server
   --fptn-dir PATH            Docker compose dir, default: /opt/fptn-server
   --fptn-config-dir PATH     FPTN config dir, default: /opt/fptn-server-data
+  --fptn-proxy-port PORT     Local proxy-server port, default: 18080
   --open-ufw                 Open node port in UFW when active
   --replace-existing         Remove old node registration before re-registering
   --replace-agent-id ID      Explicit old agent id to remove
@@ -267,6 +271,17 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+  fptn-proxy-server:
+    image: ${FPTN_PROXY_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      - fptn-server
+    ports:
+      - "127.0.0.1:${FPTN_PROXY_PORT}:80/tcp"
+    environment:
+      FPTN_HOST: "${NODE_HOST}"
+      FPTN_PORT: "${NODE_PORT}"
+    command: /usr/bin/fptn-proxy --target-host "${NODE_HOST}" --target-port "${NODE_PORT}" --listen-port 80
 EOF
 }
 
@@ -328,10 +343,10 @@ sync_local_panel_with_fptn() {
     find "${FPTN_CONFIG_DIR}" -maxdepth 1 -type f -exec chmod 640 {} \;
   fi
 
-  local_metrics_url="https://127.0.0.1:${NODE_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
+  local_metrics_url="http://127.0.0.1:${FPTN_PROXY_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
   set_panel_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
   set_panel_env_var "FPTN_PROMETHEUS_METRICS_URL" "${local_metrics_url}"
-  set_panel_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "true"
+  set_panel_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "false"
   systemctl restart "${PANEL_SERVICE_NAME}"
 
   (
@@ -357,7 +372,7 @@ install_node_controller() {
   local installer_path="$1"
   local effective_metrics_url="${LOCAL_METRICS_URL}"
   if [[ -z "${effective_metrics_url}" ]]; then
-    effective_metrics_url="https://127.0.0.1:${NODE_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
+    effective_metrics_url="http://127.0.0.1:${FPTN_PROXY_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
   fi
   local cmd=(
     bash "${installer_path}"
@@ -470,12 +485,20 @@ while [[ $# -gt 0 ]]; do
       FPTN_IMAGE="$2"
       shift 2
       ;;
+    --fptn-proxy-image)
+      FPTN_PROXY_IMAGE="$2"
+      shift 2
+      ;;
     --fptn-dir)
       FPTN_DIR="$2"
       shift 2
       ;;
     --fptn-config-dir)
       FPTN_CONFIG_DIR="$2"
+      shift 2
+      ;;
+    --fptn-proxy-port)
+      FPTN_PROXY_PORT="$2"
       shift 2
       ;;
     --open-ufw)
@@ -571,6 +594,7 @@ echo "FPTN node bootstrap completed."
 echo "FPTN compose: ${FPTN_DIR}/docker-compose.yml"
 echo "FPTN config:  ${FPTN_CONFIG_DIR}"
 echo "Public port:  ${NODE_HOST}:${NODE_PORT}"
+echo "Metrics:      http://127.0.0.1:${FPTN_PROXY_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
 echo "DNS:          ${DNS_IPV4_PRIMARY}, ${DNS_IPV4_SECONDARY}"
 echo "Metrics key:  ${PROMETHEUS_SECRET_ACCESS_KEY}"
 echo

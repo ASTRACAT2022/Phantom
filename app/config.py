@@ -51,6 +51,11 @@ def detect_local_fptn_metrics_urls() -> list[str]:
     if not compose_body:
         return []
 
+    proxy_port_match = re.search(
+        r'^\s*-\s*"127\.0\.0\.1:(?P<proxy_port>\d+):80/tcp"\s*$',
+        compose_body,
+        re.MULTILINE,
+    )
     port_match = re.search(r'^\s*-\s*"(?P<port>\d+):443/tcp"\s*$', compose_body, re.MULTILINE)
     secret_match = re.search(
         r'^\s*PROMETHEUS_SECRET_ACCESS_KEY:\s*"(?P<secret>[^"]+)"\s*$',
@@ -68,10 +73,21 @@ def detect_local_fptn_metrics_urls() -> list[str]:
     port = port_match.group("port")
     secret = secret_match.group("secret")
     path = f"/api/v1/metrics/{secret}"
-    candidates = [
-        f"https://127.0.0.1:{port}{path}",
-        f"https://localhost:{port}{path}",
-    ]
+    candidates: list[str] = []
+    if proxy_port_match:
+        proxy_port = proxy_port_match.group("proxy_port")
+        candidates.extend(
+            [
+                f"http://127.0.0.1:{proxy_port}{path}",
+                f"http://localhost:{proxy_port}{path}",
+            ]
+        )
+    candidates.extend(
+        [
+            f"https://127.0.0.1:{port}{path}",
+            f"https://localhost:{port}{path}",
+        ]
+    )
     if server_match:
         for host in [item.strip() for item in server_match.group("server").split(",") if item.strip()]:
             candidates.append(f"https://{host}:{port}{path}")
