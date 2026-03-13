@@ -160,6 +160,15 @@ set_panel_env_var() {
   fi
 }
 
+detect_panel_service_user() {
+  local service_user=""
+  service_user="$(systemctl show -p User --value "${PANEL_SERVICE_NAME}" 2>/dev/null || true)"
+  if [[ -z "${service_user}" ]]; then
+    service_user="phantom"
+  fi
+  printf '%s\n' "${service_user}"
+}
+
 install_dependencies() {
   if [[ "${SKIP_DOCKER_INSTALL}" == "true" ]]; then
     return
@@ -290,6 +299,7 @@ open_firewall() {
 
 sync_local_panel_with_fptn() {
   local panel_host=""
+  local panel_service_user=""
   panel_host="$(detect_panel_host)"
   if [[ ! -f "${PANEL_ENV_FILE}" ]]; then
     return
@@ -302,6 +312,13 @@ sync_local_panel_with_fptn() {
   fi
   if [[ ! -x "/opt/phantom-control-plane/.venv/bin/python" ]]; then
     return
+  fi
+
+  panel_service_user="$(detect_panel_service_user)"
+  if id -u "${panel_service_user}" >/dev/null 2>&1; then
+    chown -R "${panel_service_user}:${panel_service_user}" "${FPTN_CONFIG_DIR}"
+    chmod 750 "${FPTN_CONFIG_DIR}"
+    find "${FPTN_CONFIG_DIR}" -maxdepth 1 -type f -exec chmod 640 {} \;
   fi
 
   set_panel_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"

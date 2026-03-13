@@ -40,6 +40,7 @@ HEARTBEAT_INTERVAL="${PHANTOM_HEARTBEAT_INTERVAL:-30}"
 REQUEST_TIMEOUT="${PHANTOM_REQUEST_TIMEOUT:-5}"
 REPLACE_EXISTING="false"
 REPLACE_AGENT_ID="${PHANTOM_REPLACE_AGENT_ID:-}"
+ALLOW_DEREGISTER_FAILURE="false"
 
 usage() {
   cat <<'EOF'
@@ -103,10 +104,26 @@ detect_host_ip() {
 
 deregister_existing_node() {
   local target_agent_id="$1"
-  if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --deregister-agent-id "${target_agent_id}"; then
-    echo "Removed previous node registration for agent_id=${target_agent_id}."
+  local attempt=1
+  local max_attempts=10
+
+  while (( attempt <= max_attempts )); do
+    if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --deregister-agent-id "${target_agent_id}"; then
+      echo "Removed previous node registration for agent_id=${target_agent_id}."
+      return 0
+    fi
+    if (( attempt < max_attempts )); then
+      echo "Panel not ready for deregister yet; retrying (${attempt}/${max_attempts})..." >&2
+      sleep 2
+    fi
+    ((attempt++))
+  done
+
+  if [[ "${ALLOW_DEREGISTER_FAILURE}" == "true" ]]; then
+    echo "Could not remove old node registration for agent_id=${target_agent_id}; continuing anyway." >&2
     return 0
   fi
+
   echo "Failed to remove old node registration for agent_id=${target_agent_id}." >&2
   exit 1
 }
@@ -287,6 +304,9 @@ chmod 600 "${ENV_FILE}"
 if [[ "${REPLACE_EXISTING}" == "true" ]]; then
   if [[ -z "${REPLACE_AGENT_ID}" ]]; then
     REPLACE_AGENT_ID="${AGENT_ID}"
+  fi
+  if [[ "${REPLACE_AGENT_ID}" == "${AGENT_ID}" ]]; then
+    ALLOW_DEREGISTER_FAILURE="true"
   fi
   deregister_existing_node "${REPLACE_AGENT_ID}"
 fi
