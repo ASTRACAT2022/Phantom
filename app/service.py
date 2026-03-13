@@ -832,7 +832,11 @@ class ControlPlaneService:
     def get_node_agent_config(self) -> dict[str, Any]:
         with self.connect() as conn:
             meta = self._get_meta(conn)
-        return self._default_node_config(meta)
+        config = self._default_node_config(meta)
+        config["agent_transport"] = "grpc" if self.settings.node_agent_grpc_enabled else "http"
+        config["grpc_enabled"] = self.settings.node_agent_grpc_enabled
+        config["grpc_port"] = self.settings.node_agent_grpc_port
+        return config
 
     def update_node_defaults(
         self,
@@ -1953,6 +1957,27 @@ class ControlPlaneService:
             self._refresh_all_access_keys(conn)
             conn.commit()
         self.sync_fptn()
+
+    def delete_node_by_agent_id(self, agent_id: str) -> bool:
+        agent_id = (agent_id or "").strip()
+        if not agent_id:
+            raise ValueError("agent_id is required.")
+
+        deleted = False
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM nodes WHERE agent_id = ?",
+                (agent_id,),
+            ).fetchone()
+            if existing:
+                conn.execute("DELETE FROM nodes WHERE agent_id = ?", (agent_id,))
+                self._refresh_all_access_keys(conn)
+                conn.commit()
+                deleted = True
+
+        if deleted:
+            self.sync_fptn()
+        return deleted
 
     def get_access_bundle(self, user_id: str) -> dict[str, str]:
         with self.connect() as conn:

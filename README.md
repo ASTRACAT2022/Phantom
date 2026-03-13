@@ -46,6 +46,9 @@ BILLING_API_TOKEN="phantom-billing-token"
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="admin-change-me"
 SESSION_COOKIE_SECURE="false"
+NODE_AGENT_GRPC_ENABLED="false"
+NODE_AGENT_GRPC_HOST="0.0.0.0"
+NODE_AGENT_GRPC_PORT="50061"
 PHANTOM_SEED_DEMO="true"
 PANEL_TIMEZONE="Europe/Moscow"
 PANEL_HOST="0.0.0.0"
@@ -62,6 +65,13 @@ DATABASE_URL="postgresql://phantom:strongpass@127.0.0.1:5432/phantom"
 
 HTML-панель и `/docs` теперь закрыты admin-auth. После deploy вход выполняется через `/login`.
 Если панель стоит за HTTPS reverse proxy, включи `SESSION_COOKIE_SECURE=true`.
+
+Для связи панели и node-controller можно включить отдельный gRPC listener на любом свободном порту, например `51173`:
+
+```bash
+NODE_AGENT_GRPC_ENABLED="true"
+NODE_AGENT_GRPC_PORT="51173"
+```
 
 ## Что появится в `FPTN_CONFIG_DIR`
 
@@ -94,7 +104,22 @@ sudo bash -s -- \
   --panel-url http://203.0.113.10:8000 \
   --shared-token phantom-node-shared-token \
   --node-name "Edge AMS-01" \
-  --node-host 1.2.3.4 \
+  --node-host 198.51.100.10 \
+  --region Amsterdam
+```
+
+Если хочешь, чтобы ноды общались с панелью по gRPC, а не по HTTP:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --transport grpc \
+  --grpc-target 203.0.113.10:51173 \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
   --region Amsterdam
 ```
 
@@ -106,11 +131,27 @@ sudo bash auto-deploy.sh \
   --panel-url http://203.0.113.10:8000 \
   --shared-token phantom-node-shared-token \
   --node-name "Edge AMS-01" \
-  --node-host 1.2.3.4 \
+  --node-host 198.51.100.10 \
   --region Amsterdam
 ```
 
 Панель тоже может работать без домена и без SSL, например на `http://IP:8000`. Порт FPTN-ноды теперь можно задать в блоке `Node Defaults` внутри панели, и node-controller будет подхватывать его автоматически, если локально он не указан.
+
+Если нода была зарегистрирована с неправильным `host`, можно пере-поднять её одной командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --replace-existing \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
+  --region Amsterdam
+```
+
+`--replace-existing` удаляет старую запись ноды из панели по `agent_id`, пересобирает FPTN-конфиги и сразу регистрирует ноду заново. Адреса `198.51.100.10` и `203.0.113.10` в примерах тестовые: их нужно заменить на реальные IP.
 
 ## Production Deploy
 
@@ -138,6 +179,13 @@ sudo bash easy-deploy.sh \
   --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom
 ```
 
+Если нужен сразу random/high port для gRPC нод:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash easy-deploy.sh --enable-node-grpc --grpc-port random
+```
+
 Можно сразу передать admin-логин:
 
 ```bash
@@ -156,6 +204,8 @@ sudo bash deploy/panel-auto-deploy.sh \
   --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom \
   --panel-host 0.0.0.0 \
   --panel-port 8000 \
+  --enable-node-grpc \
+  --grpc-port random \
   --node-token phantom-node-shared-token \
   --billing-token phantom-billing-token
 ```
@@ -171,6 +221,7 @@ sudo bash deploy/panel-auto-deploy.sh \
 
 Если указан `DATABASE_URL`, панель будет использовать `PostgreSQL`. Если нет, будет использоваться `SQLite`.
 После deploy панель выводит admin username/password для первого входа.
+Если включён `--enable-node-grpc`, deploy также выведет отдельный gRPC port для node-controller.
 
 Для совсем простого запуска используй [easy-deploy.sh](/Users/astracat/Documents/Phantom/easy-deploy.sh), а если нужен полный контроль над путями и env, используй [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh).
 

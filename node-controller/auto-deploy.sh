@@ -24,6 +24,9 @@ SERVICE_NAME="phantom-node-controller.service"
 
 PANEL_URL="${PHANTOM_PANEL_URL:-}"
 SHARED_TOKEN="${PHANTOM_SHARED_TOKEN:-}"
+NODE_TRANSPORT="${PHANTOM_NODE_TRANSPORT:-http}"
+PANEL_GRPC_TARGET="${PHANTOM_PANEL_GRPC_TARGET:-}"
+PANEL_GRPC_PORT="${PHANTOM_PANEL_GRPC_PORT:-50061}"
 AGENT_ID="${PHANTOM_AGENT_ID:-}"
 NODE_NAME="${FPTN_NODE_NAME:-}"
 NODE_HOST="${FPTN_NODE_HOST:-}"
@@ -35,6 +38,8 @@ METRICS_URL="${LOCAL_FPTN_METRICS_URL:-}"
 NET_INTERFACE="${PHANTOM_NET_INTERFACE:-}"
 HEARTBEAT_INTERVAL="${PHANTOM_HEARTBEAT_INTERVAL:-30}"
 REQUEST_TIMEOUT="${PHANTOM_REQUEST_TIMEOUT:-5}"
+REPLACE_EXISTING="false"
+REPLACE_AGENT_ID="${PHANTOM_REPLACE_AGENT_ID:-}"
 
 usage() {
   cat <<'EOF'
@@ -46,6 +51,9 @@ Required:
   --shared-token TOKEN       Must match NODE_CONTROLLER_SHARED_TOKEN on the panel
 
 Optional:
+  --transport http|grpc      Default: http
+  --grpc-target HOST:PORT    Explicit panel gRPC target
+  --grpc-port PORT           Panel gRPC port, default: 50061
   --agent-id ID              Stable node agent id, default: hostname
   --node-name NAME           Node display name, default: hostname
   --node-host HOST           Public IP/hostname, default: auto-detected local IP
@@ -57,14 +65,18 @@ Optional:
   --interface IFACE          Network interface, default: auto-detect from route
   --heartbeat-interval SEC   Default: 30
   --request-timeout SEC      Default: 5
+  --replace-existing         Remove old node record from the panel before re-registering
+  --replace-agent-id ID      Agent id to remove first, default: current --agent-id / hostname
   --help                     Show this help
 
 Example:
   sudo bash auto-deploy.sh \
     --panel-url https://panel.example.com \
     --shared-token super-secret \
+    --transport grpc \
+    --grpc-target panel.example.com:51173 \
     --node-name "Edge AMS-01" \
-    --node-host 1.2.3.4 \
+    --node-host 203.0.113.10 \
     --region Amsterdam \
     --tier public
 EOF
@@ -89,6 +101,16 @@ detect_host_ip() {
   hostname -I 2>/dev/null | awk '{print $1}'
 }
 
+deregister_existing_node() {
+  local target_agent_id="$1"
+  if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --deregister-agent-id "${target_agent_id}"; then
+    echo "Removed previous node registration for agent_id=${target_agent_id}."
+    return 0
+  fi
+  echo "Failed to remove old node registration for agent_id=${target_agent_id}." >&2
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --panel-url)
@@ -97,6 +119,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --shared-token)
       SHARED_TOKEN="$2"
+      shift 2
+      ;;
+    --transport)
+      NODE_TRANSPORT="$2"
+      shift 2
+      ;;
+    --grpc-target)
+      PANEL_GRPC_TARGET="$2"
+      shift 2
+      ;;
+    --grpc-port)
+      PANEL_GRPC_PORT="$2"
       shift 2
       ;;
     --agent-id)
@@ -141,6 +175,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --request-timeout)
       REQUEST_TIMEOUT="$2"
+      shift 2
+      ;;
+    --replace-existing)
+      REPLACE_EXISTING="true"
+      shift
+      ;;
+    --replace-agent-id)
+      REPLACE_AGENT_ID="$2"
       shift 2
       ;;
     --help|-h)
@@ -193,6 +235,11 @@ if [[ -n "${NODE_TIER}" && "${NODE_TIER}" != "public" && "${NODE_TIER}" != "prem
   exit 1
 fi
 
+if [[ "${NODE_TRANSPORT}" != "http" && "${NODE_TRANSPORT}" != "grpc" ]]; then
+  echo "--transport must be one of: http, grpc"
+  exit 1
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required but not installed."
   exit 1
@@ -202,9 +249,26 @@ install -d "${INSTALL_DIR}"
 install -m 755 "${SCRIPT_DIR}/agent.py" "${INSTALL_DIR}/agent.py"
 install -m 644 "${SCRIPT_DIR}/phantom-node-controller.service" "${SERVICE_FILE}"
 
+if [[ "${NODE_TRANSPORT}" == "grpc" && -z "${PANEL_GRPC_TARGET}" ]]; then
+  PANEL_GRPC_TARGET="$(
+    /usr/bin/python3 - "${PANEL_URL}" "${PANEL_GRPC_PORT}" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+panel_url = sys.argv[1]
+grpc_port = sys.argv[2]
+host = urlsplit(panel_url).hostname or panel_url
+print(f"{host}:{grpc_port}")
+PY
+  )"
+fi
+
 {
   write_env_var "PHANTOM_PANEL_URL" "${PANEL_URL}"
   write_env_var "PHANTOM_SHARED_TOKEN" "${SHARED_TOKEN}"
+  write_env_var "PHANTOM_NODE_TRANSPORT" "${NODE_TRANSPORT}"
+  write_env_var "PHANTOM_PANEL_GRPC_TARGET" "${PANEL_GRPC_TARGET}"
+  write_env_var "PHANTOM_PANEL_GRPC_PORT" "${PANEL_GRPC_PORT}"
   write_env_var "PHANTOM_AGENT_ID" "${AGENT_ID}"
   write_env_var "FPTN_NODE_NAME" "${NODE_NAME}"
   write_env_var "FPTN_NODE_HOST" "${NODE_HOST}"
@@ -220,6 +284,13 @@ install -m 644 "${SCRIPT_DIR}/phantom-node-controller.service" "${SERVICE_FILE}"
 
 chmod 600 "${ENV_FILE}"
 
+if [[ "${REPLACE_EXISTING}" == "true" ]]; then
+  if [[ -z "${REPLACE_AGENT_ID}" ]]; then
+    REPLACE_AGENT_ID="${AGENT_ID}"
+  fi
+  deregister_existing_node "${REPLACE_AGENT_ID}"
+fi
+
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
@@ -230,6 +301,10 @@ echo
 echo "Phantom node-controller deployed."
 echo "Service: ${SERVICE_NAME}"
 echo "Panel:   ${PANEL_URL}"
+echo "Transport: ${NODE_TRANSPORT}"
+if [[ "${NODE_TRANSPORT}" == "grpc" ]]; then
+  echo "gRPC:    ${PANEL_GRPC_TARGET}"
+fi
 echo "Node:    ${NODE_NAME} (${NODE_HOST}:${NODE_PORT:-panel-default})"
 echo "Tier:    ${NODE_TIER:-panel-default}"
 echo "Region:  ${NODE_REGION:-panel-default}"

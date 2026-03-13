@@ -290,7 +290,21 @@ sudo bash auto-deploy.sh \
   --panel-url http://SERVER_IP:8000 \
   --shared-token my-node-token \
   --node-name "Edge AMS-01" \
-  --node-host 1.2.3.4 \
+  --node-host 198.51.100.10 \
+  --region Amsterdam
+```
+
+Если нужно удалить старую запись ноды и зарегистрировать её заново с новым IP:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://SERVER_IP:8000 \
+  --shared-token my-node-token \
+  --replace-existing \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
   --region Amsterdam
 ```
 

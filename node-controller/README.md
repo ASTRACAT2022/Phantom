@@ -31,7 +31,7 @@ sudo bash -s -- \
   --panel-url http://203.0.113.10:8000 \
   --shared-token phantom-node-shared-token \
   --node-name "Edge AMS-01" \
-  --node-host 1.2.3.4 \
+  --node-host 198.51.100.10 \
   --region Amsterdam
 ```
 
@@ -43,12 +43,47 @@ sudo bash -s -- \
   --panel-url http://203.0.113.10:8000 \
   --shared-token phantom-node-shared-token \
   --node-name "Edge AMS-01" \
-  --node-host 1.2.3.4 \
+  --node-host 198.51.100.10 \
   --node-port 9443 \
   --region Amsterdam
 ```
 
 Этот bootstrap-скрипт сам скачает `agent.py`, `phantom-node-controller.service` и `auto-deploy.sh` из GitHub, после чего поставит сервис.
+
+## gRPC transport
+
+По умолчанию агент ходит в панель по HTTP. Если хочешь вынести heartbeat/config/deregister в отдельный gRPC listener панели на произвольном порту, можно установить ноду так:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --transport grpc \
+  --grpc-target 203.0.113.10:51173 \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
+  --region Amsterdam
+```
+
+Если host у gRPC тот же, что и у панели, можно не писать `--grpc-target`, а передать только отдельный порт:
+
+```bash
+sudo bash auto-deploy.sh \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --transport grpc \
+  --grpc-port 51173 \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10
+```
+
+При `--transport grpc` agent использует gRPC для:
+
+- получения node defaults;
+- heartbeat;
+- deregister/re-register.
 
 ## One-shot автодеплой
 
@@ -60,7 +95,7 @@ sudo bash auto-deploy.sh \
   --panel-url http://203.0.113.10:8000 \
   --shared-token phantom-node-shared-token \
   --node-name "Edge AMS-01" \
-  --node-host 1.2.3.4 \
+  --node-host 198.51.100.10 \
   --region Amsterdam
 ```
 
@@ -76,6 +111,30 @@ sudo bash auto-deploy.sh \
 Если не передавать `--agent-id`, `--node-name`, `--node-host` или `--interface`, скрипт постарается определить их автоматически.
 Если не передавать `--node-port`, `--tier` или `--region`, агент попробует взять defaults из панели.
 
+## Пере-регистрация ноды
+
+Если нода была зарегистрирована с неправильным IP/host, можно снять старую запись и сразу поднять новую той же командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --replace-existing \
+  --node-name "Edge AMS-01" \
+  --node-host 198.51.100.10 \
+  --node-port 8443 \
+  --region Amsterdam
+```
+
+Что делает `--replace-existing`:
+
+- удаляет старую запись ноды из панели по `agent_id`;
+- пересобирает FPTN server lists;
+- заново регистрирует ноду с новым `host/port`.
+
+По умолчанию для удаления используется текущий `agent_id`. Если нужно удалить запись с другим `agent_id`, передай `--replace-agent-id OLD_ID`.
+
 ## Без домена и SSL
 
 Для самой админ-панели домен и SSL не обязательны. Node-controller спокойно работает с адресом вида:
@@ -85,6 +144,7 @@ http://SERVER_IP:8000
 ```
 
 Важно: для `curl` нужно использовать именно `raw.githubusercontent.com`, а не обычную HTML-ссылку `github.com/...`, иначе скачается страница GitHub, а не shell-скрипт.
+Адреса вида `198.51.100.10` и `203.0.113.10` в примерах выше тестовые; вместо них нужно подставлять реальный IP панели и ноды.
 
 А FPTN-нода может слушать любой свободный порт, например `8443`, `9443` или `10443`. Этот порт можно:
 

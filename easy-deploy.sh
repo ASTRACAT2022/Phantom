@@ -16,6 +16,9 @@ DATABASE_URL=""
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
 SESSION_COOKIE_SECURE="false"
+ENABLE_NODE_GRPC="false"
+NODE_GRPC_HOST="0.0.0.0"
+NODE_GRPC_PORT=""
 
 usage() {
   cat <<'EOF'
@@ -33,6 +36,9 @@ Options:
   --admin-username USER
   --admin-password PASS
   --session-cookie-secure true|false
+  --enable-node-grpc
+  --grpc-host HOST
+  --grpc-port PORT|random
   --metrics-url URL
   --database-url URL
   --timezone TZ
@@ -97,6 +103,18 @@ parse_args() {
         ;;
       --session-cookie-secure)
         SESSION_COOKIE_SECURE="$2"
+        shift 2
+        ;;
+      --enable-node-grpc)
+        ENABLE_NODE_GRPC="true"
+        shift
+        ;;
+      --grpc-host)
+        NODE_GRPC_HOST="$2"
+        shift 2
+        ;;
+      --grpc-port)
+        NODE_GRPC_PORT="$2"
         shift 2
         ;;
       --metrics-url)
@@ -180,6 +198,12 @@ main() {
   fi
   if [[ -n "${DATABASE_URL}" ]]; then
     CMD+=(--database-url "${DATABASE_URL}")
+  fi
+  if [[ "${ENABLE_NODE_GRPC}" == "true" ]]; then
+    CMD+=(--enable-node-grpc --grpc-host "${NODE_GRPC_HOST}")
+    if [[ -n "${NODE_GRPC_PORT}" ]]; then
+      CMD+=(--grpc-port "${NODE_GRPC_PORT}")
+    fi
   fi
 
   "${CMD[@]}"

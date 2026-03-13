@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import BASE_DIR, load_settings
+from .node_agent_grpc import start_node_agent_grpc_server
 from .service import ControlPlaneService, format_datetime, human_bytes
 
 
@@ -30,6 +31,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.filters["datetime"] = format_datetime
 templates.env.filters["bytes"] = human_bytes
 templates.env.globals["json_dumps"] = json.dumps
+app.state.node_agent_grpc_server = None
 
 SESSION_TTL_SECONDS = 60 * 60 * 12
 
@@ -65,6 +67,10 @@ class BillingStatusPayload(BillingLookupPayload):
 class BillingSpeedPayload(BillingLookupPayload):
     speed_mode: Optional[str] = None
     bandwidth_mbps: Optional[int] = Field(default=None, ge=1)
+
+
+class NodeAgentDeregisterPayload(BaseModel):
+    agent_id: str
 
 
 def nav_items() -> list[dict[str, str]]:
@@ -163,6 +169,22 @@ class AdminSessionMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(AdminSessionMiddleware)
+
+
+@app.on_event("startup")
+async def startup_node_agent_grpc() -> None:
+    if not settings.node_agent_grpc_enabled:
+        return
+    app.state.node_agent_grpc_server = await start_node_agent_grpc_server(settings, service)
+
+
+@app.on_event("shutdown")
+async def shutdown_node_agent_grpc() -> None:
+    grpc_server = getattr(app.state, "node_agent_grpc_server", None)
+    if grpc_server is None:
+        return
+    await grpc_server.stop(grace=2)
+    app.state.node_agent_grpc_server = None
 
 
 def redirect_back(
@@ -514,6 +536,19 @@ async def node_agent_heartbeat(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JSONResponse(result)
+
+
+@app.post("/api/node-agent/deregister")
+async def node_agent_deregister(
+    payload: NodeAgentDeregisterPayload,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_node_agent(authorization)
+    try:
+        deleted = service.delete_node_by_agent_id(payload.agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "deleted": deleted, "agent_id": payload.agent_id})
 
 
 @app.get("/api/v1/billing/users/{username}")

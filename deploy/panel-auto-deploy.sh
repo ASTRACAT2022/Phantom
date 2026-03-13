@@ -27,6 +27,9 @@ ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
 ADMIN_SESSION_SECRET=""
 SESSION_COOKIE_SECURE="false"
+NODE_AGENT_GRPC_ENABLED="false"
+NODE_AGENT_GRPC_HOST="0.0.0.0"
+NODE_AGENT_GRPC_PORT="50061"
 PHANTOM_SEED_DEMO="false"
 PANEL_TIMEZONE="Europe/Moscow"
 PHANTOM_BACKUP_DIR="/var/backups/phantom-control-plane"
@@ -52,6 +55,9 @@ Options:
   --admin-username USER
   --admin-password PASS
   --session-cookie-secure true|false
+  --enable-node-grpc
+  --grpc-host HOST
+  --grpc-port PORT|random
   --seed-demo true|false
   --timezone TZ
   --backup-dir PATH
@@ -69,6 +75,13 @@ random_token() {
   python3 - <<'PY'
 import secrets
 print(secrets.token_urlsafe(32))
+PY
+}
+
+random_port() {
+  python3 - <<'PY'
+import random
+print(random.randint(20000, 60000))
 PY
 }
 
@@ -139,6 +152,18 @@ parse_args() {
         ;;
       --session-cookie-secure)
         SESSION_COOKIE_SECURE="$2"
+        shift 2
+        ;;
+      --enable-node-grpc)
+        NODE_AGENT_GRPC_ENABLED="true"
+        shift
+        ;;
+      --grpc-host)
+        NODE_AGENT_GRPC_HOST="$2"
+        shift 2
+        ;;
+      --grpc-port)
+        NODE_AGENT_GRPC_PORT="$2"
         shift 2
         ;;
       --seed-demo)
@@ -237,6 +262,9 @@ write_env_file() {
   if [[ -z "${ADMIN_SESSION_SECRET}" ]]; then
     ADMIN_SESSION_SECRET="$(random_token)"
   fi
+  if [[ "${NODE_AGENT_GRPC_ENABLED}" == "true" && "${NODE_AGENT_GRPC_PORT}" == "random" ]]; then
+    NODE_AGENT_GRPC_PORT="$(random_port)"
+  fi
 
   if [[ ! -f "${ENV_FILE}" ]]; then
     install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${ENV_FILE}"
@@ -254,6 +282,9 @@ write_env_file() {
   set_env_var "ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
   set_env_var "ADMIN_SESSION_SECRET" "${ADMIN_SESSION_SECRET}"
   set_env_var "SESSION_COOKIE_SECURE" "${SESSION_COOKIE_SECURE}"
+  set_env_var "NODE_AGENT_GRPC_ENABLED" "${NODE_AGENT_GRPC_ENABLED}"
+  set_env_var "NODE_AGENT_GRPC_HOST" "${NODE_AGENT_GRPC_HOST}"
+  set_env_var "NODE_AGENT_GRPC_PORT" "${NODE_AGENT_GRPC_PORT}"
   set_env_var "PHANTOM_SEED_DEMO" "${PHANTOM_SEED_DEMO}"
   set_env_var "PANEL_TIMEZONE" "${PANEL_TIMEZONE}"
   set_env_var "PANEL_HOST" "${PANEL_HOST}"
@@ -305,6 +336,10 @@ Backups:
   retention_days=${PHANTOM_BACKUP_RETENTION_DAYS}
   run_now=sudo bash /opt/phantom-control-plane/deploy/backup.sh
   restore=sudo bash /opt/phantom-control-plane/deploy/restore.sh --archive ${PHANTOM_BACKUP_DIR}/phantom-backup-YYYYMMDD-HHMMSS.tar.gz
+
+Node gRPC:
+  enabled=${NODE_AGENT_GRPC_ENABLED}
+  target=${PANEL_HOST}:${NODE_AGENT_GRPC_PORT}
 
 EOF
 }

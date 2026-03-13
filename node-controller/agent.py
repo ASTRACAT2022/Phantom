@@ -10,8 +10,20 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+try:
+    import grpc
+except ImportError:  # pragma: no cover - depends on deployment env
+    grpc = None
+
+
+NODE_AGENT_GRPC_SERVICE = "phantom.nodeagent.NodeAgentService"
+NODE_AGENT_GRPC_GET_CONFIG = f"/{NODE_AGENT_GRPC_SERVICE}/GetConfig"
+NODE_AGENT_GRPC_HEARTBEAT = f"/{NODE_AGENT_GRPC_SERVICE}/Heartbeat"
+NODE_AGENT_GRPC_DEREGISTER = f"/{NODE_AGENT_GRPC_SERVICE}/Deregister"
 
 
 DEFAULT_ENV_PATH = "/etc/phantom-node-controller.env"
@@ -34,6 +46,8 @@ def load_env_file(path: str) -> None:
 class AgentConfig:
     panel_url: str
     shared_token: str
+    transport: str
+    grpc_target: str
     agent_id: str
     node_name: str
     node_host: str
@@ -192,7 +206,34 @@ def read_fptn_active_sessions(metrics_url: str, timeout: int) -> int:
     return 0
 
 
-def fetch_panel_defaults(panel_url: str, shared_token: str, timeout: int) -> dict:
+def _grpc_request(target: str, method: str, payload: dict, shared_token: str, timeout: int) -> dict:
+    if grpc is None:
+        raise RuntimeError("grpcio is not installed. Install grpcio to use gRPC transport.")
+
+    with grpc.insecure_channel(target) as channel:
+        rpc = channel.unary_unary(
+            method,
+            request_serializer=lambda value: json.dumps(value).encode("utf-8"),
+            response_deserializer=lambda raw: json.loads(raw.decode("utf-8")) if raw else {},
+        )
+        return rpc(
+            payload,
+            timeout=timeout,
+            metadata=(("authorization", f"Bearer {shared_token}"),),
+        )
+
+
+def _derive_grpc_target(panel_url: str, grpc_target: str, grpc_port: int) -> str:
+    if grpc_target:
+        return grpc_target
+    parsed = urlsplit(panel_url)
+    host = parsed.hostname or panel_url
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{grpc_port}"
+
+
+def fetch_panel_defaults_http(panel_url: str, shared_token: str, timeout: int) -> dict:
     request = Request(
         f"{panel_url}/api/node-agent/config",
         headers={"Authorization": f"Bearer {shared_token}"},
@@ -202,15 +243,32 @@ def fetch_panel_defaults(panel_url: str, shared_token: str, timeout: int) -> dic
         return json.loads(response.read().decode("utf-8"))
 
 
+def fetch_panel_defaults_grpc(grpc_target: str, shared_token: str, timeout: int) -> dict:
+    return _grpc_request(grpc_target, NODE_AGENT_GRPC_GET_CONFIG, {}, shared_token, timeout)
+
+
 def build_config() -> AgentConfig:
     load_env_file(os.getenv("PHANTOM_NODE_ENV_FILE", DEFAULT_ENV_PATH))
     hostname = socket.gethostname()
     panel_url = os.getenv("PHANTOM_PANEL_URL", "http://127.0.0.1:8000").rstrip("/")
     shared_token = os.getenv("PHANTOM_SHARED_TOKEN", "phantom-node-shared-token")
+    transport = os.getenv("PHANTOM_NODE_TRANSPORT", "http").strip().lower() or "http"
     request_timeout = int(os.getenv("PHANTOM_REQUEST_TIMEOUT", "5"))
+    grpc_port = int(os.getenv("PHANTOM_PANEL_GRPC_PORT", "50061"))
+    grpc_target = _derive_grpc_target(
+        panel_url,
+        os.getenv("PHANTOM_PANEL_GRPC_TARGET", "").strip(),
+        grpc_port,
+    )
+
+    if transport not in {"http", "grpc"}:
+        raise RuntimeError("PHANTOM_NODE_TRANSPORT must be 'http' or 'grpc'.")
 
     try:
-        panel_defaults = fetch_panel_defaults(panel_url, shared_token, request_timeout)
+        if transport == "grpc":
+            panel_defaults = fetch_panel_defaults_grpc(grpc_target, shared_token, request_timeout)
+        else:
+            panel_defaults = fetch_panel_defaults_http(panel_url, shared_token, request_timeout)
     except Exception:
         panel_defaults = {}
 
@@ -222,6 +280,8 @@ def build_config() -> AgentConfig:
     return AgentConfig(
         panel_url=panel_url,
         shared_token=shared_token,
+        transport=transport,
+        grpc_target=grpc_target,
         agent_id=os.getenv("PHANTOM_AGENT_ID", hostname),
         node_name=os.getenv("FPTN_NODE_NAME", hostname),
         node_host=raw_host or panel_defaults.get("host", "") or hostname,
@@ -236,7 +296,7 @@ def build_config() -> AgentConfig:
     )
 
 
-def post_heartbeat(config: AgentConfig, payload: dict) -> None:
+def post_heartbeat_http(config: AgentConfig, payload: dict) -> None:
     request = Request(
         f"{config.panel_url}/api/node-agent/heartbeat",
         data=json.dumps(payload).encode("utf-8"),
@@ -248,6 +308,47 @@ def post_heartbeat(config: AgentConfig, payload: dict) -> None:
     )
     with urlopen(request, timeout=config.request_timeout) as response:
         response.read()
+
+
+def post_heartbeat_grpc(config: AgentConfig, payload: dict) -> None:
+    _grpc_request(
+        config.grpc_target,
+        NODE_AGENT_GRPC_HEARTBEAT,
+        payload,
+        config.shared_token,
+        config.request_timeout,
+    )
+
+
+def post_heartbeat(config: AgentConfig, payload: dict) -> None:
+    if config.transport == "grpc":
+        post_heartbeat_grpc(config, payload)
+        return
+    post_heartbeat_http(config, payload)
+
+
+def deregister_node(config: AgentConfig, agent_id: str) -> dict:
+    payload = {"agent_id": agent_id}
+    if config.transport == "grpc":
+        return _grpc_request(
+            config.grpc_target,
+            NODE_AGENT_GRPC_DEREGISTER,
+            payload,
+            config.shared_token,
+            config.request_timeout,
+        )
+
+    request = Request(
+        f"{config.panel_url}/api/node-agent/deregister",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config.shared_token}",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=config.request_timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def build_payload(config: AgentConfig, collector: LinuxCollector) -> dict:
@@ -302,6 +403,12 @@ def run_once(config: AgentConfig, collector: LinuxCollector) -> int:
     return 0
 
 
+def run_deregister(config: AgentConfig, agent_id: str) -> int:
+    payload = deregister_node(config, agent_id)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
 def run_forever(config: AgentConfig, collector: LinuxCollector) -> int:
     while True:
         try:
@@ -323,9 +430,17 @@ def run_forever(config: AgentConfig, collector: LinuxCollector) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phantom lightweight node-controller for FPTN.")
     parser.add_argument("--once", action="store_true", help="Send one heartbeat and exit.")
+    parser.add_argument(
+        "--deregister-agent-id",
+        default="",
+        help="Remove an existing node registration by agent_id and exit.",
+    )
     args = parser.parse_args()
 
     config = build_config()
+    if args.deregister_agent_id:
+        return run_deregister(config, args.deregister_agent_id)
+
     collector = LinuxCollector(config.interface)
     if args.once:
         return run_once(config, collector)

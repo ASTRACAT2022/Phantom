@@ -22,6 +22,9 @@ Optional environment overrides:
 Forwarded options:
   --panel-url URL
   --shared-token TOKEN
+  --transport http|grpc
+  --grpc-target HOST:PORT
+  --grpc-port PORT
   --agent-id ID
   --node-name NAME
   --node-host HOST
@@ -33,6 +36,8 @@ Forwarded options:
   --interface IFACE
   --heartbeat-interval SEC
   --request-timeout SEC
+  --replace-existing
+  --replace-agent-id ID
   --help
 EOF
 }
