@@ -74,6 +74,17 @@
 
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">
+              <span>DNS Primary</span>
+              <input class="input" id="deploy-dns-primary" type="text" value="{{ node_deploy.default_dns_primary }}" />
+            </label>
+            <label class="field">
+              <span>DNS Secondary</span>
+              <input class="input" id="deploy-dns-secondary" type="text" value="{{ node_deploy.default_dns_secondary }}" />
+            </label>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
               <span>gRPC target</span>
               <input class="input font-mono" id="deploy-grpc-target" type="text" value="{{ node_deploy.grpc_target }}" />
             </label>
@@ -235,6 +246,8 @@
       const transport = document.getElementById("deploy-transport").value.trim() || nodeDeploy.default_transport;
       const grpcTarget = document.getElementById("deploy-grpc-target").value.trim() || nodeDeploy.grpc_target;
       const proxyDomain = document.getElementById("deploy-proxy-domain").value.trim() || nodeDeploy.default_proxy_domain;
+      const dnsPrimary = document.getElementById("deploy-dns-primary").value.trim() || nodeDeploy.default_dns_primary;
+      const dnsSecondary = document.getElementById("deploy-dns-secondary").value.trim() || nodeDeploy.default_dns_secondary;
       const agentId = document.getElementById("deploy-agent-id").value.trim();
       const replaceExisting = document.getElementById("deploy-replace-existing").checked;
       const openUfw = document.getElementById("deploy-open-ufw").checked;
@@ -262,6 +275,8 @@
       const fullStackArgs = [
         ...commonArgs,
         `--proxy-domain ${shellQuote(proxyDomain)}`,
+        `--dns-ipv4-primary ${shellQuote(dnsPrimary)}`,
+        `--dns-ipv4-secondary ${shellQuote(dnsSecondary)}`,
         ...replaceArgs,
         ...firewallArgs,
       ];
@@ -307,6 +322,8 @@
         "deploy-transport",
         "deploy-grpc-target",
         "deploy-proxy-domain",
+        "deploy-dns-primary",
+        "deploy-dns-secondary",
         "deploy-agent-id",
         "deploy-replace-existing",
         "deploy-open-ufw",

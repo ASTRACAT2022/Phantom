@@ -143,10 +143,13 @@ sudo bash -s -- \
   --region Amsterdam \
   --tier public \
   --proxy-domain vk.ru \
+  --dns-ipv4-primary 77.239.113.0 \
+  --dns-ipv4-secondary 108.165.164.201 \
   --open-ufw
 ```
 
 А ещё этот же flow теперь есть прямо в панели на странице `Nodes`: кнопка `+ Новая прод-нода` генерирует готовые команды деплоя под текущий token, panel URL и transport.
+В мастер ноды добавлены поля `DNS Primary` и `DNS Secondary`; по умолчанию full-stack deploy использует `77.239.113.0` и `108.165.164.201`.
 
 One-shot деплой ноды:
 

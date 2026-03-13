@@ -65,6 +65,8 @@ sudo bash -s -- \
   --region Amsterdam \
   --tier public \
   --proxy-domain vk.ru \
+  --dns-ipv4-primary 77.239.113.0 \
+  --dns-ipv4-secondary 108.165.164.201 \
   --open-ufw
 ```
 
@@ -73,8 +75,11 @@ sudo bash -s -- \
 - ставит Docker и openssl на apt-based Linux;
 - поднимает `FPTN` через Docker;
 - генерирует `server.crt` и `server.key`;
+- настраивает upstream DNS для `FPTN`;
 - открывает порт в `ufw`, если он активен;
 - ставит `node-controller` и сразу подключает ноду к панели.
+
+Если DNS явно не передавать, full-stack installer по умолчанию использует `77.239.113.0` и `108.165.164.201`.
 
 ## gRPC transport
 

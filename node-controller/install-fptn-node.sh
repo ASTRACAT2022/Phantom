@@ -17,6 +17,8 @@ NODE_PORT="${FPTN_NODE_PORT:-8443}"
 NODE_REGION="${FPTN_NODE_REGION:-}"
 NODE_TIER="${FPTN_NODE_TIER:-}"
 PROXY_DOMAIN="${FPTN_DEFAULT_PROXY_DOMAIN:-vk.ru}"
+DNS_IPV4_PRIMARY="${FPTN_DNS_IPV4_PRIMARY:-77.239.113.0}"
+DNS_IPV4_SECONDARY="${FPTN_DNS_IPV4_SECONDARY:-108.165.164.201}"
 FPTN_IMAGE="${FPTN_SERVER_IMAGE:-fptnvpn/fptn-vpn-server:latest}"
 FPTN_DIR="${FPTN_SERVER_DIR:-/opt/fptn-server}"
 FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/opt/fptn-server-data}"
@@ -62,6 +64,8 @@ Optional:
   --region REGION            Node region label
   --tier public|premium|censored
   --proxy-domain DOMAIN      FPTN DEFAULT_PROXY_DOMAIN, default: vk.ru
+  --dns-ipv4-primary IP      Upstream DNS primary, default: 77.239.113.0
+  --dns-ipv4-secondary IP    Upstream DNS secondary, default: 108.165.164.201
   --allowed-sni-list CSV     Default: proxy domain
   --prometheus-key KEY       Secret for FPTN metrics, default: auto-generated
   --max-sessions COUNT       Default: 3
@@ -255,6 +259,8 @@ services:
       REMOTE_SERVER_AUTH_PORT: "${REMOTE_SERVER_AUTH_PORT}"
       MAX_ACTIVE_SESSIONS_PER_USER: "${MAX_ACTIVE_SESSIONS_PER_USER}"
       SERVER_EXTERNAL_IPS: "${NODE_HOST}"
+      DNS_IPV4_PRIMARY: "${DNS_IPV4_PRIMARY}"
+      DNS_IPV4_SECONDARY: "${DNS_IPV4_SECONDARY}"
     healthcheck:
       test: ["CMD", "sh", "-c", "pgrep dnsmasq && pgrep fptn-server"]
       interval: 30s
@@ -436,6 +442,14 @@ while [[ $# -gt 0 ]]; do
       PROXY_DOMAIN="$2"
       shift 2
       ;;
+    --dns-ipv4-primary)
+      DNS_IPV4_PRIMARY="$2"
+      shift 2
+      ;;
+    --dns-ipv4-secondary)
+      DNS_IPV4_SECONDARY="$2"
+      shift 2
+      ;;
     --allowed-sni-list)
       ALLOWED_SNI_LIST="$2"
       shift 2
@@ -557,6 +571,7 @@ echo "FPTN node bootstrap completed."
 echo "FPTN compose: ${FPTN_DIR}/docker-compose.yml"
 echo "FPTN config:  ${FPTN_CONFIG_DIR}"
 echo "Public port:  ${NODE_HOST}:${NODE_PORT}"
+echo "DNS:          ${DNS_IPV4_PRIMARY}, ${DNS_IPV4_SECONDARY}"
 echo "Metrics key:  ${PROMETHEUS_SECRET_ACCESS_KEY}"
 echo
 echo "Verify:"

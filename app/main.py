@@ -228,6 +228,8 @@ def node_deploy_context(request: Request) -> dict[str, object]:
         "agent_installer_url": f"{PHANTOM_NODE_CONTROLLER_RAW_BASE}/install-via-github.sh",
         "full_stack_installer_url": f"{PHANTOM_NODE_CONTROLLER_RAW_BASE}/install-fptn-node.sh",
         "default_proxy_domain": "vk.ru",
+        "default_dns_primary": "77.239.113.0",
+        "default_dns_secondary": "108.165.164.201",
         "fptn_image": "fptnvpn/fptn-vpn-server:latest",
     }
 
