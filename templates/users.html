@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="space-y-6">
+    {% include "_flash.html" %}
+    {% include "_accuracy.html" %}
+
+    <section class="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+      <section class="panel-card">
+        <div class="mb-4">
+          <h2 class="panel-title">Добавить пользователя</h2>
+          <p class="panel-subtitle">
+            Отдельный раздел для создания новых клиентов без перегруза главного экрана.
+          </p>
+        </div>
+        <form action="/actions/users" method="post" class="space-y-3">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Username</span>
+              <input class="input" type="text" name="username" placeholder="client42" required />
+            </label>
+            <label class="field">
+              <span>Скорость Mbps</span>
+              <input class="input" type="number" name="bandwidth_mbps" min="1" value="50" required />
+            </label>
+          </div>
+          <label class="field">
+            <span>Режим скорости</span>
+            <select class="input" name="speed_mode">
+              <option value="limited">Ограничить по Mbps</option>
+              <option value="unlimited">Дать всю скорость</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Комментарий</span>
+            <input class="input" type="text" name="note" placeholder="Premium, reseller, test group..." />
+          </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Подписка, дней</span>
+              <input class="input" type="number" name="subscription_days" min="1" value="30" required />
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" name="is_premium" />
+              <span>Выдать premium-доступ</span>
+            </label>
+          </div>
+          <button class="btn btn-primary w-full" type="submit">Создать пользователя</button>
+        </form>
+      </section>
+
+      <section class="panel-card">
+        <div class="grid gap-4 sm:grid-cols-3">
+          <article class="metric-card">
+            <span class="metric-label">Active Subs</span>
+            <strong class="metric-value">{{ overview.active_subscriptions }}</strong>
+            <span class="metric-note">Подписки активны</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Expiring Soon</span>
+            <strong class="metric-value">{{ overview.expiring_soon }}</strong>
+            <span class="metric-note">Нужно продлить</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Active Sessions</span>
+            <strong class="metric-value">{{ overview.active_sessions }}</strong>
+            <span class="metric-note">По всем пользователям</span>
+          </article>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel-card space-y-4">
+      <div>
+        <h2 class="panel-title">Пользователи и подписки</h2>
+        <p class="panel-subtitle">
+          Все операции по пользователям теперь собраны в одном разделе без конкуренции с сессиями и инфраструктурой.
+        </p>
+      </div>
+      {% include "_users_table.html" %}
+    </section>
+  </div>
+{% endblock %}

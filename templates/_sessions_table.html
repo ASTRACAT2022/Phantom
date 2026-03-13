@@ -1,0 +1,51 @@
+<div class="table-shell">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Пользователь</th>
+        <th>IP</th>
+        <th>Узел</th>
+        <th>Rx / Tx</th>
+        <th>Трафик</th>
+        <th>Последняя активность</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for session in sessions %}
+        <tr>
+          <td>
+            <div class="space-y-1">
+              <strong>{{ session.username }}</strong>
+              <div class="text-xs text-slate-500">{{ session.client_version }}</div>
+            </div>
+          </td>
+          <td>
+            <div class="font-mono text-xs">
+              <div>{{ session.ip_address }}</div>
+              <div class="text-slate-500">{{ session.vpn_ipv4 }}</div>
+            </div>
+          </td>
+          <td>{{ session.node_name }}</td>
+          <td>
+            <div class="space-y-1 text-sm">
+              <div>{{ session.rx_mbps }} Mbps</div>
+              <div class="text-slate-500">{{ session.tx_mbps }} Mbps</div>
+            </div>
+          </td>
+          <td>
+            <div class="space-y-1 text-sm">
+              <div>{{ session.ingress_human }}</div>
+              <div class="text-slate-500">{{ session.egress_human }}</div>
+            </div>
+          </td>
+          <td>
+            <div class="space-y-1 text-sm">
+              <div>{{ session.last_seen_human }}</div>
+              <div class="text-xs text-slate-500">{{ session.status }}</div>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

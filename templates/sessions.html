@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="space-y-6">
+    {% include "_flash.html" %}
+    {% include "_accuracy.html" %}
+
+    <section class="grid gap-4 sm:grid-cols-3">
+      <article class="metric-card">
+        <span class="metric-label">Сессии онлайн</span>
+        <strong class="metric-value">{{ overview.active_sessions }}</strong>
+        <span class="metric-note">Источник: {{ data_sources.traffic }}</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Активные IP</span>
+        <strong class="metric-value">{{ overview.active_ips }}</strong>
+        <span class="metric-note">Уникальные IP сейчас</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Нагрузка</span>
+        <strong class="metric-value">{{ overview.download_rate }}</strong>
+        <span class="metric-note">{{ overview.upload_rate }} uplink</span>
+      </article>
+    </section>
+
+    <section class="panel-card space-y-4">
+      <div>
+        <h2 class="panel-title">Активные IP и сессии</h2>
+        <p class="panel-subtitle">
+          Здесь только живая работа операторов: кто сейчас онлайн, откуда пришёл и через какой узел сидит.
+        </p>
+      </div>
+      {% include "_sessions_table.html" %}
+    </section>
+  </div>
+{% endblock %}

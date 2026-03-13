@@ -1,0 +1,573 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="space-y-6">
+    <header class="panel-card overflow-hidden">
+      <div class="grid gap-6 lg:grid-cols-[1.4fr_0.8fr]">
+        <div class="space-y-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="pill pill-ghost">VPN / Proxy Control Plane</span>
+            <span class="pill {{ 'pill-success' if metrics_status.connected else 'pill-warning' }}">
+              {{ "Live FPTN metrics" if metrics_status.connected else "Demo + local data" }}
+            </span>
+            <span class="pill pill-ghost">Shadcn-style UI</span>
+          </div>
+          <div class="space-y-2">
+            <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">
+              {{ app_name }}
+            </h1>
+            <p class="max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
+              Полноценная панель управления вокруг FPTN: пользователи, подписки,
+              access keys, активные IP, онлайн-сессии, трафик и мониторинг edge-узлов.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+            <span>FPTN config dir: <code>{{ config_dir }}</code></span>
+            <span>Последняя синхронизация: <strong>{{ last_sync_at }}</strong></span>
+          </div>
+        </div>
+        <div class="rounded-3xl border border-white/80 bg-white/85 p-4 shadow-panel">
+          <div class="space-y-4">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                Операционный статус
+              </p>
+              <p class="mt-2 text-sm leading-6 text-slate-700">
+                {{ metrics_status.message }}
+              </p>
+            </div>
+            <form action="/actions/sync" method="post" class="space-y-3">
+              <button class="btn btn-primary w-full" type="submit">
+                Синхронизировать с FPTN сейчас
+              </button>
+            </form>
+            <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-3 text-xs leading-5 text-slate-600">
+              Панель пишет совместимые файлы <code>users.list</code>,
+              <code>servers.json</code>, <code>premium_servers.json</code> и
+              <code>servers_censored_zone.json</code>, а также генерирует FPTN access link.
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    {% if flash_message %}
+      <div class="flash {{ 'flash-error' if flash_level == 'error' else 'flash-success' }}">
+        {{ flash_message }}
+      </div>
+    {% endif %}
+
+    <div id="clipboard-status" class="clipboard-status opacity-0"></div>
+
+    <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <article class="metric-card">
+        <span class="metric-label">Пользователи</span>
+        <strong class="metric-value">{{ overview.total_users }}</strong>
+        <span class="metric-note">{{ overview.active_subscriptions }} с активной подпиской</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Сессии онлайн</span>
+        <strong class="metric-value">{{ overview.active_sessions }}</strong>
+        <span class="metric-note">{{ overview.active_ips }} активных IP</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Трафик In</span>
+        <strong class="metric-value">{{ overview.total_ingress }}</strong>
+        <span class="metric-note">Суммарно по пользователям</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Трафик Out</span>
+        <strong class="metric-value">{{ overview.total_egress }}</strong>
+        <span class="metric-note">{{ overview.expiring_soon }} скоро истекают</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Текущая нагрузка</span>
+        <strong class="metric-value">{{ overview.download_rate }}</strong>
+        <span class="metric-note">{{ overview.upload_rate }} uplink · {{ overview.online_nodes }} узла онлайн</span>
+      </article>
+    </section>
+
+    <section class="grid gap-6 xl:grid-cols-[1.45fr_0.85fr]">
+      <div class="panel-card space-y-4">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <h2 class="panel-title">Живой мониторинг трафика</h2>
+            <p class="panel-subtitle">
+              Временной ряд по throughput и числу активных пользователей.
+            </p>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="trafficChart"></canvas>
+        </div>
+      </div>
+
+      <div class="space-y-6">
+        <section class="panel-card">
+          <div class="mb-4">
+            <h2 class="panel-title">Добавить пользователя</h2>
+            <p class="panel-subtitle">
+              Создаёт учётную запись, access key и сразу синхронизирует FPTN.
+            </p>
+          </div>
+          <form action="/actions/users" method="post" class="space-y-3">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                <span>Username</span>
+                <input class="input" type="text" name="username" placeholder="client42" required />
+              </label>
+              <label class="field">
+                <span>Скорость Mbps</span>
+                <input class="input" type="number" name="bandwidth_mbps" min="1" value="50" required />
+              </label>
+            </div>
+            <label class="field">
+              <span>Комментарий</span>
+              <input class="input" type="text" name="note" placeholder="Например: premium streaming client" />
+            </label>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                <span>Подписка, дней</span>
+                <input class="input" type="number" name="subscription_days" min="1" value="30" required />
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" name="is_premium" />
+                <span>Выдать premium-доступ</span>
+              </label>
+            </div>
+            <button class="btn btn-primary w-full" type="submit">Создать пользователя</button>
+          </form>
+        </section>
+
+        <section class="panel-card">
+          <div class="mb-4">
+            <h2 class="panel-title">Добавить edge-узел</h2>
+            <p class="panel-subtitle">
+              Узел попадёт в FPTN server list и в свежие access keys.
+            </p>
+          </div>
+          <form action="/actions/nodes" method="post" class="space-y-3">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                <span>Имя узла</span>
+                <input class="input" type="text" name="name" placeholder="Edge MAD-01" required />
+              </label>
+              <label class="field">
+                <span>Tier</span>
+                <select class="input" name="tier">
+                  <option value="public">public</option>
+                  <option value="premium">premium</option>
+                  <option value="censored">censored</option>
+                </select>
+              </label>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                <span>Host</span>
+                <input class="input" type="text" name="host" placeholder="es-01.phantom.edge" required />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input class="input" type="number" name="port" value="443" min="1" max="65535" required />
+              </label>
+            </div>
+            <label class="field">
+              <span>Регион</span>
+              <input class="input" type="text" name="region" placeholder="Madrid" required />
+            </label>
+            <label class="field">
+              <span>MD5 fingerprint</span>
+              <input class="input font-mono" type="text" name="md5_fingerprint" placeholder="a5bc..." />
+            </label>
+            <button class="btn btn-secondary w-full" type="submit">Добавить узел</button>
+          </form>
+        </section>
+
+        <section class="panel-card">
+          <div class="mb-4">
+            <h2 class="panel-title">Node Defaults</h2>
+            <p class="panel-subtitle">
+              Значения, которые node-controller может забирать из панели. Подходит для сценария без домена, без SSL и с любым свободным портом.
+            </p>
+          </div>
+          <form action="/actions/config/node-defaults" method="post" class="space-y-3">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                <span>Default FPTN host</span>
+                <input class="input" type="text" name="default_node_host" value="{{ node_defaults.host }}" placeholder="203.0.113.10" />
+              </label>
+              <label class="field">
+                <span>Default FPTN port</span>
+                <input class="input" type="number" name="default_node_port" min="1" max="65535" value="{{ node_defaults.port }}" required />
+              </label>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">
+                <span>Default tier</span>
+                <select class="input" name="default_node_tier">
+                  <option value="public" {{ 'selected' if node_defaults.tier == 'public' else '' }}>public</option>
+                  <option value="premium" {{ 'selected' if node_defaults.tier == 'premium' else '' }}>premium</option>
+                  <option value="censored" {{ 'selected' if node_defaults.tier == 'censored' else '' }}>censored</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Default region</span>
+                <input class="input" type="text" name="default_node_region" value="{{ node_defaults.region }}" placeholder="Amsterdam" required />
+              </label>
+            </div>
+            <label class="field">
+              <span>Transport hint</span>
+              <input class="input" type="text" name="node_transport_hint" value="{{ node_defaults.transport_hint }}" placeholder="Use IP:8443 without domain on panel" />
+            </label>
+            <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-3 text-xs leading-5 text-slate-600">
+              Сейчас по умолчанию: host <code>{{ node_defaults.host or "node-local/agent value" }}</code>,
+              port <code>{{ node_defaults.port }}</code>, tier <code>{{ node_defaults.tier }}</code>.
+              Агент может работать с панелью по адресу вроде <code>http://IP:8000</code>.
+            </div>
+            <button class="btn btn-primary w-full" type="submit">Сохранить defaults</button>
+          </form>
+        </section>
+      </div>
+    </section>
+
+    <section class="panel-card space-y-4">
+      <div>
+        <h2 class="panel-title">Операционные алерты</h2>
+        <p class="panel-subtitle">То, что сейчас требует внимания команды.</p>
+      </div>
+      <div class="grid gap-3 md:grid-cols-2">
+        {% for alert in alerts %}
+          <div class="alert-tile">{{ alert }}</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="panel-card space-y-4">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 class="panel-title">Пользователи и подписки</h2>
+          <p class="panel-subtitle">
+            CRUD по пользователям, статусы подписки, трафик, access keys и быстрые действия.
+          </p>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Пользователь</th>
+              <th>План</th>
+              <th>Трафик</th>
+              <th>Сессии</th>
+              <th>Подписка</th>
+              <th>Ключ / Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for user in users %}
+              <tr>
+                <td>
+                  <div class="space-y-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <strong>{{ user.username }}</strong>
+                      <span class="pill {{ 'pill-success' if user.status == 'active' else ('pill-danger' if user.status == 'expired' else 'pill-warning') }}">
+                        {{ user.status }}
+                      </span>
+                      {% if user.is_premium %}
+                        <span class="pill pill-dark">premium</span>
+                      {% endif %}
+                    </div>
+                    <div class="text-xs text-slate-500">
+                      {{ user.note or "Без комментария" }} · создан {{ user.created_human }}
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <div class="space-y-1 text-sm">
+                    <div>{{ user.bandwidth_mbps }} Mbps</div>
+                    <div class="text-xs text-slate-500">FPTN username: <code>{{ user.username }}</code></div>
+                  </div>
+                </td>
+                <td>
+                  <div class="space-y-1 text-sm">
+                    <div>In: {{ user.ingress_human }}</div>
+                    <div>Out: {{ user.egress_human }}</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="space-y-1 text-sm">
+                    <div>{{ user.active_sessions }} active</div>
+                    <div class="text-xs text-slate-500">{{ user.active_ips }} IP онлайн</div>
+                  </div>
+                </td>
+                <td>
+                  <div class="space-y-2 text-sm">
+                    <div>{{ user.expires_human }}</div>
+                    <form action="/actions/users/{{ user.id }}/subscription" method="post" class="inline-flex gap-2">
+                      <input class="input input-mini w-20" type="number" name="days" min="1" value="30" />
+                      <button class="btn btn-ghost" type="submit">Продлить</button>
+                    </form>
+                  </div>
+                </td>
+                <td>
+                  <div class="space-y-3">
+                    {% if user.key %}
+                      <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <div class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                          Access link
+                        </div>
+                        <div class="mt-2 break-all font-mono text-[11px] text-slate-700">
+                          {{ user.key.access_link }}
+                        </div>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                          <button
+                            class="btn btn-ghost"
+                            type="button"
+                            onclick="copyText({{ user.key.access_link|tojson }})"
+                          >
+                            Копировать
+                          </button>
+                          <a class="btn btn-ghost" href="/users/{{ user.id }}/config">
+                            Скачать `.fptn`
+                          </a>
+                        </div>
+                      </div>
+                    {% endif %}
+                    <div class="flex flex-wrap gap-2">
+                      <form action="/actions/users/{{ user.id }}/rotate-key" method="post">
+                        <button class="btn btn-secondary" type="submit">Сбросить ключ</button>
+                      </form>
+                      <form action="/actions/users/{{ user.id }}/status" method="post">
+                        <input type="hidden" name="next_status" value="{{ 'suspended' if user.status == 'active' else 'active' }}" />
+                        <button class="btn btn-ghost" type="submit">
+                          {{ 'Заморозить' if user.status == 'active' else 'Включить' }}
+                        </button>
+                      </form>
+                      <form action="/actions/users/{{ user.id }}/delete" method="post" onsubmit="return confirm('Удалить пользователя {{ user.username }}?')">
+                        <button class="btn btn-danger" type="submit">Удалить</button>
+                      </form>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+      <div class="panel-card space-y-4">
+        <div>
+          <h2 class="panel-title">Активные IP и сессии</h2>
+          <p class="panel-subtitle">
+            Кто сейчас онлайн, через какой узел подключён и какой throughput даёт прямо сейчас.
+          </p>
+        </div>
+        <div class="table-shell">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Пользователь</th>
+                <th>IP</th>
+                <th>Узел</th>
+                <th>Rx / Tx</th>
+                <th>Трафик</th>
+                <th>Последняя активность</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for session in sessions %}
+                <tr>
+                  <td>
+                    <div class="space-y-1">
+                      <strong>{{ session.username }}</strong>
+                      <div class="text-xs text-slate-500">{{ session.client_version }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="font-mono text-xs">
+                      <div>{{ session.ip_address }}</div>
+                      <div class="text-slate-500">{{ session.vpn_ipv4 }}</div>
+                    </div>
+                  </td>
+                  <td>{{ session.node_name }}</td>
+                  <td>
+                    <div class="space-y-1 text-sm">
+                      <div>{{ session.rx_mbps }} Mbps</div>
+                      <div class="text-slate-500">{{ session.tx_mbps }} Mbps</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="space-y-1 text-sm">
+                      <div>{{ session.ingress_human }}</div>
+                      <div class="text-slate-500">{{ session.egress_human }}</div>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="space-y-1 text-sm">
+                      <div>{{ session.last_seen_human }}</div>
+                      <div class="text-xs text-slate-500">{{ session.status }}</div>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel-card space-y-4">
+        <div>
+          <h2 class="panel-title">Инфраструктура FPTN</h2>
+          <p class="panel-subtitle">
+            Скорость, нагрузка и состав edge-слоя для public, premium и censored tiers.
+          </p>
+        </div>
+        <div class="space-y-3">
+          {% for node in nodes %}
+            <article class="node-card">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="space-y-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="text-base font-bold">{{ node.name }}</h3>
+                    <span class="pill {{ 'pill-success' if node.status_display == 'online' else ('pill-danger' if node.status_display == 'offline' else 'pill-warning') }}">
+                      {{ node.status_display }}
+                    </span>
+                    <span class="pill pill-ghost">{{ node.tier }}</span>
+                    <span class="pill pill-ghost">{{ node.source }}</span>
+                  </div>
+                  <p class="text-sm text-slate-600">{{ node.region }} · {{ node.host }}:{{ node.port }}</p>
+                  <p class="text-xs text-slate-500">
+                    heartbeat: {{ node.last_heartbeat_human }} · uptime: {{ node.uptime_human }}
+                  </p>
+                </div>
+                <form action="/actions/nodes/{{ node.id }}/delete" method="post" onsubmit="return confirm('Удалить узел {{ node.name }}?')">
+                  <button class="btn btn-danger" type="submit">Удалить</button>
+                </form>
+              </div>
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <div class="stat-chip">
+                  <span>CPU</span>
+                  <strong>{{ node.cpu_load }}%</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>Memory</span>
+                  <strong>{{ node.memory_load }}%</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>Rx</span>
+                  <strong>{{ node.network_rx_mbps }} Mbps</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>Tx</span>
+                  <strong>{{ node.network_tx_mbps }} Mbps</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>FPTN sessions</span>
+                  <strong>{{ node.fptn_active_sessions }}</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>Connections</span>
+                  <strong>{{ node.connections_current }}</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>Пользователи онлайн</span>
+                  <strong>{{ node.active_users }}</strong>
+                </div>
+                <div class="stat-chip">
+                  <span>Uptime</span>
+                  <strong>{{ node.uptime_percent }}%</strong>
+                </div>
+                <div class="stat-chip sm:col-span-2">
+                  <span>System memory</span>
+                  <strong>{{ node.memory_human }}</strong>
+                </div>
+                <div class="stat-chip sm:col-span-2">
+                  <span>Load avg</span>
+                  <strong>{{ node.load_1 }} / {{ node.load_5 }} / {{ node.load_15 }}</strong>
+                </div>
+              </div>
+              <div class="mt-4 font-mono text-[11px] text-slate-500">
+                fingerprint: {{ node.md5_fingerprint or "not-set" }} · hostname: {{ node.hostname or "n/a" }}
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const chartSource = {{ traffic_chart_json | safe }};
+    const ctx = document.getElementById("trafficChart");
+    if (ctx) {
+      new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: chartSource.labels,
+          datasets: [
+            {
+              label: "Ingress Mbps",
+              data: chartSource.ingress,
+              borderColor: "#0f766e",
+              backgroundColor: "rgba(15, 118, 110, 0.12)",
+              tension: 0.35,
+              fill: true,
+            },
+            {
+              label: "Egress Mbps",
+              data: chartSource.egress,
+              borderColor: "#1d4ed8",
+              backgroundColor: "rgba(29, 78, 216, 0.10)",
+              tension: 0.35,
+              fill: true,
+            },
+            {
+              label: "Active Users",
+              data: chartSource.active_users,
+              borderColor: "#ea580c",
+              backgroundColor: "rgba(234, 88, 12, 0.08)",
+              tension: 0.35,
+              fill: false,
+              yAxisID: "y1",
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: "index",
+            intersect: false,
+          },
+          plugins: {
+            legend: {
+              labels: {
+                color: "#334155",
+                usePointStyle: true,
+              },
+            },
+          },
+          scales: {
+            x: {
+              ticks: { color: "#64748b" },
+              grid: { color: "rgba(148, 163, 184, 0.12)" },
+            },
+            y: {
+              ticks: { color: "#64748b" },
+              grid: { color: "rgba(148, 163, 184, 0.12)" },
+            },
+            y1: {
+              position: "right",
+              ticks: { color: "#64748b" },
+              grid: { drawOnChartArea: false },
+            },
+          },
+        },
+      });
+    }
+  </script>
+{% endblock %}

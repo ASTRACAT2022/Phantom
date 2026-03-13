@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="space-y-6">
+    {% include "_flash.html" %}
+    {% include "_accuracy.html" %}
+
+    <section class="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+      <section class="panel-card">
+        <div class="mb-4">
+          <h2 class="panel-title">Node Defaults</h2>
+          <p class="panel-subtitle">
+            Здесь задаются значения по умолчанию для node-controller. Без домена и без 443 тоже нормально.
+          </p>
+        </div>
+        <form action="/actions/config/node-defaults" method="post" class="space-y-3">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Default FPTN host</span>
+              <input class="input" type="text" name="default_node_host" value="{{ node_defaults.host }}" placeholder="203.0.113.10" />
+            </label>
+            <label class="field">
+              <span>Default FPTN port</span>
+              <input class="input" type="number" name="default_node_port" min="1" max="65535" value="{{ node_defaults.port }}" required />
+            </label>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Default tier</span>
+              <select class="input" name="default_node_tier">
+                <option value="public" {{ 'selected' if node_defaults.tier == 'public' else '' }}>public</option>
+                <option value="premium" {{ 'selected' if node_defaults.tier == 'premium' else '' }}>premium</option>
+                <option value="censored" {{ 'selected' if node_defaults.tier == 'censored' else '' }}>censored</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Default region</span>
+              <input class="input" type="text" name="default_node_region" value="{{ node_defaults.region }}" required />
+            </label>
+          </div>
+          <label class="field">
+            <span>Transport hint</span>
+            <input class="input" type="text" name="node_transport_hint" value="{{ node_defaults.transport_hint }}" />
+          </label>
+          <button class="btn btn-primary w-full" type="submit">Сохранить defaults</button>
+        </form>
+      </section>
+
+      <section class="space-y-6">
+        <section class="panel-card">
+          <h2 class="panel-title">Синхронизация</h2>
+          <p class="panel-subtitle">
+            Ручная пересборка FPTN-конфигов вынесена в отдельный безопасный раздел.
+          </p>
+          <form action="/actions/sync" method="post" class="mt-4">
+            <button class="btn btn-secondary" type="submit">Синхронизировать с FPTN сейчас</button>
+          </form>
+        </section>
+
+        <section class="panel-card">
+          <h2 class="panel-title">Speed Policy</h2>
+          <p class="panel-subtitle">
+            У `FPTN` нет отдельного unlimited-флага в `users.list`, поэтому режим “вся скорость” экспортируется как высокий безопасный профиль.
+          </p>
+          <form action="/actions/config/speed-policy" method="post" class="mt-4 space-y-3">
+            <label class="field">
+              <span>Full speed export profile (Mbps)</span>
+              <input
+                class="input"
+                type="number"
+                name="unlimited_profile_mbps"
+                min="1"
+                max="2047"
+                value="{{ speed_policy.unlimited_profile_mbps }}"
+                required
+              />
+            </label>
+            <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-3 text-xs leading-5 text-slate-600">
+              Это значение уходит в `users.list` для пользователей с режимом <code>Full speed</code>.
+              Ядро `FPTN` не поддерживает настоящий unlimited-флаг, поэтому панель использует высокий лимит вместо нуля.
+            </div>
+            <button class="btn btn-primary" type="submit">Сохранить speed policy</button>
+          </form>
+        </section>
+
+        <section class="panel-card">
+          <h2 class="panel-title">Что видят агенты</h2>
+          <div class="mt-4 space-y-3">
+            <div class="list-row"><span>Default host</span><strong>{{ node_defaults.host or "agent/local override" }}</strong></div>
+            <div class="list-row"><span>Default port</span><strong>{{ node_defaults.port }}</strong></div>
+            <div class="list-row"><span>Default tier</span><strong>{{ node_defaults.tier }}</strong></div>
+            <div class="list-row"><span>Default region</span><strong>{{ node_defaults.region }}</strong></div>
+            <div class="list-row"><span>Full speed export</span><strong>{{ speed_policy.unlimited_profile_mbps }} Mbps</strong></div>
+            <div class="list-row"><span>Config dir</span><strong class="font-mono text-xs">{{ config_dir }}</strong></div>
+          </div>
+        </section>
+      </section>
+    </section>
+  </div>
+{% endblock %}

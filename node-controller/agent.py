@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+
+DEFAULT_ENV_PATH = "/etc/phantom-node-controller.env"
+
+
+def load_env_file(path: str) -> None:
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
+
+@dataclass
+class AgentConfig:
+    panel_url: str
+    shared_token: str
+    agent_id: str
+    node_name: str
+    node_host: str
+    node_port: int
+    region: str
+    tier: str
+    cert_path: str
+    metrics_url: str
+    interface: str
+    interval_seconds: int
+    request_timeout: int
+
+
+class LinuxCollector:
+    def __init__(self, interface: str) -> None:
+        self.interface = interface or self.detect_default_interface() or "eth0"
+        self._previous_network = None
+
+    def detect_default_interface(self) -> Optional[str]:
+        route_path = Path("/proc/net/route")
+        if not route_path.exists():
+            return None
+        for line in route_path.read_text(encoding="utf-8").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) > 2 and parts[1] == "00000000":
+                return parts[0]
+        return None
+
+    def read_uptime_seconds(self) -> int:
+        return int(float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0]))
+
+    def read_loadavg(self) -> tuple[float, float, float]:
+        parts = Path("/proc/loadavg").read_text(encoding="utf-8").split()
+        return float(parts[0]), float(parts[1]), float(parts[2])
+
+    def read_cpu_percent(self) -> float:
+        def snapshot() -> tuple[int, int]:
+            fields = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0].split()[1:]
+            values = [int(value) for value in fields]
+            idle = values[3] + values[4]
+            total = sum(values)
+            return idle, total
+
+        idle_1, total_1 = snapshot()
+        time.sleep(0.2)
+        idle_2, total_2 = snapshot()
+        delta_total = total_2 - total_1
+        delta_idle = idle_2 - idle_1
+        if delta_total <= 0:
+            return 0.0
+        return round((1 - (delta_idle / delta_total)) * 100, 1)
+
+    def read_memory(self) -> tuple[int, int, float]:
+        values = {}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, raw_value = line.split(":", 1)
+            values[key] = int(raw_value.strip().split()[0])
+        total_mb = values.get("MemTotal", 0) // 1024
+        available_mb = values.get("MemAvailable", 0) // 1024
+        used_mb = max(total_mb - available_mb, 0)
+        used_percent = round((used_mb / total_mb) * 100, 1) if total_mb else 0.0
+        return total_mb, used_mb, used_percent
+
+    def read_disk_used_percent(self) -> float:
+        usage = shutil.disk_usage("/")
+        if not usage.total:
+            return 0.0
+        return round((usage.used / usage.total) * 100, 1)
+
+    def read_network_counters(self) -> tuple[int, int]:
+        for line in Path("/proc/net/dev").read_text(encoding="utf-8").splitlines()[2:]:
+            if ":" not in line:
+                continue
+            name, raw_data = line.split(":", 1)
+            if name.strip() != self.interface:
+                continue
+            fields = raw_data.split()
+            return int(fields[0]), int(fields[8])
+        return 0, 0
+
+    def read_network_speed(self) -> tuple[float, float, int, int]:
+        rx_total, tx_total = self.read_network_counters()
+        now = time.time()
+        if self._previous_network is None:
+            self._previous_network = (now, rx_total, tx_total)
+            return 0.0, 0.0, rx_total, tx_total
+        previous_time, previous_rx, previous_tx = self._previous_network
+        elapsed = max(now - previous_time, 1.0)
+        rx_mbps = max(rx_total - previous_rx, 0) * 8 / elapsed / 1_000_000
+        tx_mbps = max(tx_total - previous_tx, 0) * 8 / elapsed / 1_000_000
+        self._previous_network = (now, rx_total, tx_total)
+        return round(rx_mbps, 2), round(tx_mbps, 2), rx_total, tx_total
+
+    def count_connections(self, port: int) -> int:
+        try:
+            result = subprocess.run(
+                ["ss", "-Htan"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                return 0
+            target = f":{port}"
+            count = 0
+            for line in result.stdout.splitlines():
+                if "ESTAB" not in line:
+                    continue
+                if target in line:
+                    count += 1
+            return count
+        except FileNotFoundError:
+            return 0
+
+
+def fingerprint_from_cert(cert_path: str) -> str:
+    if not cert_path or not Path(cert_path).exists():
+        return ""
+    try:
+        result = subprocess.run(
+            [
+                "openssl",
+                "x509",
+                "-noout",
+                "-fingerprint",
+                "-md5",
+                "-in",
+                cert_path,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or "=" not in result.stdout:
+            return ""
+        return result.stdout.split("=", 1)[1].strip().replace(":", "").lower()
+    except FileNotFoundError:
+        return ""
+
+
+def read_fptn_active_sessions(metrics_url: str, timeout: int) -> int:
+    if not metrics_url:
+        return 0
+    try:
+        with urlopen(metrics_url, timeout=timeout) as response:
+            payload = response.read().decode("utf-8")
+    except Exception:
+        return 0
+    for line in payload.splitlines():
+        line = line.strip()
+        if line.startswith("fptn_active_sessions "):
+            try:
+                return int(float(line.split()[-1]))
+            except ValueError:
+                return 0
+    return 0
+
+
+def fetch_panel_defaults(panel_url: str, shared_token: str, timeout: int) -> dict:
+    request = Request(
+        f"{panel_url}/api/node-agent/config",
+        headers={"Authorization": f"Bearer {shared_token}"},
+        method="GET",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def build_config() -> AgentConfig:
+    load_env_file(os.getenv("PHANTOM_NODE_ENV_FILE", DEFAULT_ENV_PATH))
+    hostname = socket.gethostname()
+    panel_url = os.getenv("PHANTOM_PANEL_URL", "http://127.0.0.1:8000").rstrip("/")
+    shared_token = os.getenv("PHANTOM_SHARED_TOKEN", "phantom-node-shared-token")
+    request_timeout = int(os.getenv("PHANTOM_REQUEST_TIMEOUT", "5"))
+
+    try:
+        panel_defaults = fetch_panel_defaults(panel_url, shared_token, request_timeout)
+    except Exception:
+        panel_defaults = {}
+
+    raw_port = os.getenv("FPTN_NODE_PORT", "").strip()
+    raw_region = os.getenv("FPTN_NODE_REGION", "").strip()
+    raw_tier = os.getenv("FPTN_NODE_TIER", "").strip()
+    raw_host = os.getenv("FPTN_NODE_HOST", "").strip()
+
+    return AgentConfig(
+        panel_url=panel_url,
+        shared_token=shared_token,
+        agent_id=os.getenv("PHANTOM_AGENT_ID", hostname),
+        node_name=os.getenv("FPTN_NODE_NAME", hostname),
+        node_host=raw_host or panel_defaults.get("host", "") or hostname,
+        node_port=int(raw_port or panel_defaults.get("port", 8443)),
+        region=raw_region or panel_defaults.get("region", "Unknown"),
+        tier=raw_tier or panel_defaults.get("tier", "public"),
+        cert_path=os.getenv("FPTN_CERT_PATH", "/etc/fptn/server.crt"),
+        metrics_url=os.getenv("LOCAL_FPTN_METRICS_URL", ""),
+        interface=os.getenv("PHANTOM_NET_INTERFACE", ""),
+        interval_seconds=int(os.getenv("PHANTOM_HEARTBEAT_INTERVAL", "30")),
+        request_timeout=request_timeout,
+    )
+
+
+def post_heartbeat(config: AgentConfig, payload: dict) -> None:
+    request = Request(
+        f"{config.panel_url}/api/node-agent/heartbeat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config.shared_token}",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=config.request_timeout) as response:
+        response.read()
+
+
+def build_payload(config: AgentConfig, collector: LinuxCollector) -> dict:
+    if not Path("/proc").exists():
+        raise RuntimeError("This node-controller currently targets Linux hosts with /proc.")
+
+    cpu_percent = collector.read_cpu_percent()
+    load_1, load_5, load_15 = collector.read_loadavg()
+    memory_total_mb, memory_used_mb, memory_used_percent = collector.read_memory()
+    disk_used_percent = collector.read_disk_used_percent()
+    network_rx_mbps, network_tx_mbps, rx_bytes_total, tx_bytes_total = collector.read_network_speed()
+    active_sessions = read_fptn_active_sessions(config.metrics_url, config.request_timeout)
+    connections_current = collector.count_connections(config.node_port)
+    hostname = socket.gethostname()
+
+    return {
+        "agent_id": config.agent_id,
+        "node": {
+            "name": config.node_name,
+            "host": config.node_host,
+            "port": config.node_port,
+            "region": config.region,
+            "tier": config.tier,
+            "md5_fingerprint": fingerprint_from_cert(config.cert_path),
+            "hostname": hostname,
+        },
+        "system": {
+            "hostname": hostname,
+            "uptime_seconds": collector.read_uptime_seconds(),
+            "load1": load_1,
+            "load5": load_5,
+            "load15": load_15,
+            "cpu_percent": cpu_percent,
+            "memory_total_mb": memory_total_mb,
+            "memory_used_mb": memory_used_mb,
+            "memory_used_percent": memory_used_percent,
+            "disk_used_percent": disk_used_percent,
+            "network_rx_mbps": network_rx_mbps,
+            "network_tx_mbps": network_tx_mbps,
+            "rx_bytes_total": rx_bytes_total,
+            "tx_bytes_total": tx_bytes_total,
+            "connections_current": max(connections_current, active_sessions),
+            "fptn_active_sessions": active_sessions,
+        },
+    }
+
+
+def run_once(config: AgentConfig, collector: LinuxCollector) -> int:
+    payload = build_payload(config, collector)
+    post_heartbeat(config, payload)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def run_forever(config: AgentConfig, collector: LinuxCollector) -> int:
+    while True:
+        try:
+            payload = build_payload(config, collector)
+            post_heartbeat(config, payload)
+            print(
+                f"[heartbeat] sent node={config.node_name} "
+                f"rx={payload['system']['network_rx_mbps']}Mbps "
+                f"tx={payload['system']['network_tx_mbps']}Mbps "
+                f"sessions={payload['system']['fptn_active_sessions']}"
+            )
+        except URLError as exc:
+            print(f"[heartbeat] panel unreachable: {exc}", file=sys.stderr)
+        except Exception as exc:
+            print(f"[heartbeat] failed: {exc}", file=sys.stderr)
+        time.sleep(max(config.interval_seconds, 5))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Phantom lightweight node-controller for FPTN.")
+    parser.add_argument("--once", action="store_true", help="Send one heartbeat and exit.")
+    args = parser.parse_args()
+
+    config = build_config()
+    collector = LinuxCollector(config.interface)
+    if args.once:
+        return run_once(config, collector)
+    return run_forever(config, collector)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

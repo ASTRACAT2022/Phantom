@@ -1,0 +1,26 @@
+<section class="panel-card space-y-4">
+  <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <div>
+      <h2 class="panel-title">Точность данных</h2>
+      <p class="panel-subtitle">
+        Панель теперь показывает источник цифр явно, чтобы live и приблизительные значения не путались.
+      </p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <span class="pill {{ 'pill-success' if data_sources.traffic == 'live_fptn' else 'pill-warning' }}">
+        {{ 'traffic: live FPTN' if data_sources.traffic == 'live_fptn' else 'traffic: panel storage' }}
+      </span>
+      <span class="pill {{ 'pill-success' if data_sources.nodes == 'node_agent' else 'pill-warning' }}">
+        {{ 'nodes: live agent' if data_sources.nodes == 'node_agent' else 'nodes: manual' }}
+      </span>
+      <span class="pill {{ 'pill-warning' if data_sources.mode == 'demo' else 'pill-success' }}">
+        {{ 'demo mode' if data_sources.mode == 'demo' else 'operational mode' }}
+      </span>
+    </div>
+  </div>
+  <div class="grid gap-3 lg:grid-cols-3">
+    {% for note in data_accuracy_notes %}
+      <div class="notice-card">{{ note }}</div>
+    {% endfor %}
+  </div>
+</section>

@@ -1,0 +1,551 @@
+import json
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
+from typing import Optional
+
+from fastapi import FastAPI, Form, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+
+from .config import BASE_DIR, load_settings
+from .service import ControlPlaneService, format_datetime, human_bytes
+
+
+settings = load_settings()
+service = ControlPlaneService(settings)
+service.initialize()
+
+app = FastAPI(title=settings.app_name)
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates.env.filters["datetime"] = format_datetime
+templates.env.filters["bytes"] = human_bytes
+templates.env.globals["json_dumps"] = json.dumps
+
+
+class BillingLookupPayload(BaseModel):
+    username: Optional[str] = None
+    billing_subscription_id: Optional[str] = None
+    billing_customer_id: Optional[str] = None
+
+
+class BillingUserUpsertPayload(BaseModel):
+    username: str
+    bandwidth_mbps: Optional[int] = Field(default=None, ge=1)
+    speed_mode: Optional[str] = None
+    subscription_days: Optional[int] = Field(default=None, ge=1)
+    subscription_expires_at: Optional[str] = None
+    is_premium: Optional[bool] = None
+    note: Optional[str] = None
+    status: Optional[str] = None
+    plan_name: Optional[str] = None
+    billing_customer_id: Optional[str] = None
+    billing_subscription_id: Optional[str] = None
+
+
+class BillingExtendPayload(BillingLookupPayload):
+    days: int = Field(..., ge=1)
+
+
+class BillingStatusPayload(BillingLookupPayload):
+    status: str
+
+
+class BillingSpeedPayload(BillingLookupPayload):
+    speed_mode: Optional[str] = None
+    bandwidth_mbps: Optional[int] = Field(default=None, ge=1)
+
+
+def nav_items() -> list[dict[str, str]]:
+    return [
+        {"key": "dashboard", "label": "Dashboard", "href": "/dashboard"},
+        {"key": "users", "label": "Users", "href": "/users"},
+        {"key": "sessions", "label": "Sessions", "href": "/sessions"},
+        {"key": "nodes", "label": "Nodes", "href": "/nodes"},
+        {"key": "settings", "label": "Settings", "href": "/settings"},
+    ]
+
+
+def _flash_url(url: str, message: str, level: str) -> str:
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["message"] = message
+    query["level"] = level
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def redirect_back(
+    request: Request,
+    message: str,
+    level: str = "success",
+    fallback: str = "/dashboard",
+) -> RedirectResponse:
+    referer = request.headers.get("referer", "")
+    if referer:
+        referer_parts = urlsplit(referer)
+        if referer_parts.netloc == request.url.netloc:
+            return RedirectResponse(
+                url=_flash_url(referer, message, level),
+                status_code=303,
+            )
+    return RedirectResponse(
+        url=_flash_url(fallback, message, level),
+        status_code=303,
+    )
+
+
+def render_page(
+    request: Request,
+    template_name: str,
+    page_key: str,
+    page_title: str,
+    page_description: str,
+) -> HTMLResponse:
+    context = service.dashboard()
+    context.update(
+        {
+            "request": request,
+            "app_name": settings.app_name,
+            "flash_message": request.query_params.get("message", ""),
+            "flash_level": request.query_params.get("level", "success"),
+            "page_key": page_key,
+            "page_title": page_title,
+            "page_description": page_description,
+            "nav_items": nav_items(),
+        }
+    )
+    return templates.TemplateResponse(template_name, context)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard", status_code=303)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request) -> HTMLResponse:
+    return render_page(
+        request,
+        "dashboard.html",
+        "dashboard",
+        "Operations Dashboard",
+        "Обзор VPN-инфраструктуры, live-метрик и того, насколько этим данным можно доверять прямо сейчас.",
+    )
+
+
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request) -> HTMLResponse:
+    return render_page(
+        request,
+        "users.html",
+        "users",
+        "Users & Subscriptions",
+        "Отдельный раздел для управления пользователями, подписками, ключами доступа и тарифами.",
+    )
+
+
+@app.get("/sessions", response_class=HTMLResponse)
+async def sessions_page(request: Request) -> HTMLResponse:
+    return render_page(
+        request,
+        "sessions.html",
+        "sessions",
+        "Sessions & Active IP",
+        "Мониторинг текущих подключений, активных IP и пользовательских сессий без лишнего шума.",
+    )
+
+
+@app.get("/nodes", response_class=HTMLResponse)
+async def nodes_page(request: Request) -> HTMLResponse:
+    return render_page(
+        request,
+        "nodes.html",
+        "nodes",
+        "Infrastructure Nodes",
+        "Узлы FPTN, heartbeat от node-controller, нагрузка, порты и состояние edge-инфраструктуры.",
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request) -> HTMLResponse:
+    return render_page(
+        request,
+        "settings.html",
+        "settings",
+        "Panel Settings",
+        "Настройки панели и node-controller defaults: host, port, tier, region и ручная синхронизация.",
+    )
+
+
+@app.post("/actions/users")
+async def create_user(
+    request: Request,
+    username: str = Form(...),
+    bandwidth_mbps: int = Form(...),
+    speed_mode: str = Form(default="limited"),
+    subscription_days: int = Form(...),
+    is_premium: Optional[str] = Form(default=None),
+    note: str = Form(default=""),
+) -> RedirectResponse:
+    try:
+        created_username = service.create_user(
+            username=username,
+            bandwidth_mbps=bandwidth_mbps,
+            speed_mode=speed_mode,
+            subscription_days=subscription_days,
+            is_premium=is_premium == "on",
+            note=note,
+        )
+        return redirect_back(request, f"User '{created_username}' created and synced to FPTN.", fallback="/users")
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/users")
+
+
+@app.post("/actions/users/{user_id}/delete")
+async def delete_user(request: Request, user_id: str) -> RedirectResponse:
+    service.delete_user(user_id)
+    return redirect_back(request, "User deleted from panel and FPTN config.", fallback="/users")
+
+
+@app.post("/actions/users/{user_id}/status")
+async def update_user_status(
+    request: Request,
+    user_id: str,
+    next_status: str = Form(...),
+) -> RedirectResponse:
+    try:
+        service.set_user_status(user_id, next_status)
+        return redirect_back(request, f"User status updated to '{next_status}'.", fallback="/users")
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/users")
+
+
+@app.post("/actions/users/{user_id}/subscription")
+async def extend_subscription(
+    request: Request,
+    user_id: str,
+    days: int = Form(...),
+) -> RedirectResponse:
+    service.extend_subscription(user_id, days)
+    return redirect_back(request, f"Subscription extended by {days} days.", fallback="/users")
+
+
+@app.post("/actions/users/{user_id}/rotate-key")
+async def rotate_user_key(request: Request, user_id: str) -> RedirectResponse:
+    service.rotate_access_key(user_id)
+    return redirect_back(request, "Access key rotated and synced to FPTN.", fallback="/users")
+
+
+@app.post("/actions/users/{user_id}/speed-mode")
+async def update_user_speed_mode(
+    request: Request,
+    user_id: str,
+    speed_mode: str = Form(...),
+) -> RedirectResponse:
+    try:
+        service.set_user_speed_mode(user_id, speed_mode)
+        return redirect_back(request, "Speed mode updated.", fallback="/users")
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/users")
+
+
+@app.get("/users/{user_id}/config")
+async def download_user_config(user_id: str) -> Response:
+    bundle = service.get_access_bundle(user_id)
+    filename = f'{bundle["username"]}.fptn'
+    return Response(
+        content=bundle["token_payload"],
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/actions/nodes")
+async def create_node(
+    request: Request,
+    name: str = Form(...),
+    host: str = Form(...),
+    port: int = Form(...),
+    region: str = Form(...),
+    tier: str = Form(...),
+    md5_fingerprint: str = Form(default=""),
+) -> RedirectResponse:
+    try:
+        service.create_node(name, host, port, region, tier, md5_fingerprint)
+        return redirect_back(
+            request,
+            "Infrastructure node added and FPTN server lists rebuilt.",
+            fallback="/nodes",
+        )
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/nodes")
+
+
+@app.post("/actions/nodes/{node_id}/delete")
+async def delete_node(request: Request, node_id: str) -> RedirectResponse:
+    service.delete_node(node_id)
+    return redirect_back(request, "Node removed and FPTN server lists rebuilt.", fallback="/nodes")
+
+
+@app.post("/actions/sync")
+async def sync_now(request: Request) -> RedirectResponse:
+    service.sync_fptn()
+    return redirect_back(request, "Manual FPTN sync completed.", fallback="/settings")
+
+
+@app.post("/actions/config/node-defaults")
+async def update_node_defaults(
+    request: Request,
+    default_node_host: str = Form(default=""),
+    default_node_port: int = Form(...),
+    default_node_tier: str = Form(...),
+    default_node_region: str = Form(...),
+    node_transport_hint: str = Form(default=""),
+) -> RedirectResponse:
+    try:
+        service.update_node_defaults(
+            default_node_host=default_node_host,
+            default_node_port=default_node_port,
+            default_node_tier=default_node_tier,
+            default_node_region=default_node_region,
+            node_transport_hint=node_transport_hint,
+        )
+        return redirect_back(
+            request,
+            "Node defaults updated. Agents can pick up the new port/settings.",
+            fallback="/settings",
+        )
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/settings")
+
+
+@app.post("/actions/config/speed-policy")
+async def update_speed_policy(
+    request: Request,
+    unlimited_profile_mbps: int = Form(...),
+) -> RedirectResponse:
+    try:
+        service.update_speed_policy(unlimited_profile_mbps)
+        return redirect_back(
+            request,
+            "Full speed profile updated.",
+            fallback="/settings",
+        )
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/settings")
+
+
+def verify_node_agent(authorization: Optional[str]) -> None:
+    if authorization != f"Bearer {settings.node_agent_token}":
+        raise HTTPException(status_code=401, detail="Unauthorized node agent.")
+
+
+def verify_billing_api(authorization: Optional[str]) -> None:
+    if authorization != f"Bearer {settings.billing_api_token}":
+        raise HTTPException(status_code=401, detail="Unauthorized billing client.")
+
+
+def require_billing_lookup(payload: BillingLookupPayload) -> None:
+    if not any(
+        [
+            (payload.username or "").strip(),
+            (payload.billing_subscription_id or "").strip(),
+            (payload.billing_customer_id or "").strip(),
+        ]
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="username, billing_subscription_id or billing_customer_id is required.",
+        )
+
+
+@app.get("/api/node-agent/config")
+async def node_agent_config(
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_node_agent(authorization)
+    return JSONResponse(service.get_node_agent_config())
+
+
+@app.post("/api/node-agent/heartbeat")
+async def node_agent_heartbeat(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_node_agent(authorization)
+
+    payload = await request.json()
+    try:
+        result = service.ingest_node_heartbeat(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse(result)
+
+
+@app.get("/api/v1/billing/users/{username}")
+async def billing_user_details(
+    username: str,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    try:
+        payload = service.get_billing_user(username=username)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "user": payload})
+
+
+@app.get("/api/v1/billing/subscriptions/check")
+async def billing_subscription_check(
+    authorization: Optional[str] = Header(default=None),
+    username: Optional[str] = None,
+    subscription_id: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    payload = BillingLookupPayload(
+        username=username,
+        billing_subscription_id=subscription_id,
+        billing_customer_id=customer_id,
+    )
+    require_billing_lookup(payload)
+    try:
+        user = service.get_billing_user(
+            username=payload.username,
+            billing_subscription_id=payload.billing_subscription_id,
+            billing_customer_id=payload.billing_customer_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse(
+        {
+            "ok": True,
+            "subscription": {
+                "username": user["username"],
+                "status": user["status"],
+                "is_active": user["is_active"],
+                "plan_name": user["plan_name"],
+                "is_premium": user["is_premium"],
+                "speed_mode": user["speed_mode"],
+                "bandwidth_mbps": user["bandwidth_mbps"],
+                "effective_bandwidth_mbps": user["effective_bandwidth_mbps"],
+                "subscription_expires_at": user["subscription_expires_at"],
+                "billing_customer_id": user["billing_customer_id"],
+                "billing_subscription_id": user["billing_subscription_id"],
+            },
+        }
+    )
+
+
+@app.get("/api/v1/billing/access-keys/{username}")
+async def billing_access_key(
+    username: str,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    try:
+        payload = service.get_billing_user(username=username)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse(
+        {
+            "ok": True,
+            "username": payload["username"],
+            "access_key": payload["access_key"],
+        }
+    )
+
+
+@app.post("/api/v1/billing/users/upsert")
+async def billing_user_upsert(
+    payload: BillingUserUpsertPayload,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    try:
+        user = service.upsert_billing_user(**payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "user": user})
+
+
+@app.post("/api/v1/billing/subscriptions/extend")
+async def billing_subscription_extend(
+    payload: BillingExtendPayload,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    require_billing_lookup(payload)
+    try:
+        user = service.extend_subscription_by_lookup(
+            days=payload.days,
+            username=payload.username,
+            billing_subscription_id=payload.billing_subscription_id,
+            billing_customer_id=payload.billing_customer_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "user": user})
+
+
+@app.post("/api/v1/billing/subscriptions/status")
+async def billing_subscription_status(
+    payload: BillingStatusPayload,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    require_billing_lookup(payload)
+    try:
+        user = service.set_user_status_by_lookup(
+            next_status=payload.status,
+            username=payload.username,
+            billing_subscription_id=payload.billing_subscription_id,
+            billing_customer_id=payload.billing_customer_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "user": user})
+
+
+@app.post("/api/v1/billing/subscriptions/speed")
+async def billing_subscription_speed(
+    payload: BillingSpeedPayload,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    require_billing_lookup(payload)
+    try:
+        user = service.update_user_speed_by_lookup(
+            speed_mode=payload.speed_mode,
+            bandwidth_mbps=payload.bandwidth_mbps,
+            username=payload.username,
+            billing_subscription_id=payload.billing_subscription_id,
+            billing_customer_id=payload.billing_customer_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "user": user})
+
+
+@app.post("/api/v1/billing/access-keys/rotate")
+async def billing_access_key_rotate(
+    payload: BillingLookupPayload,
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_billing_api(authorization)
+    require_billing_lookup(payload)
+    try:
+        user = service.rotate_access_key_by_lookup(
+            username=payload.username,
+            billing_subscription_id=payload.billing_subscription_id,
+            billing_customer_id=payload.billing_customer_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse({"ok": True, "user": user})
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "app": settings.app_name}

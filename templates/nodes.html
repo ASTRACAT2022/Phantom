@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="space-y-6">
+    {% include "_flash.html" %}
+    {% include "_accuracy.html" %}
+
+    <section class="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+      <section class="panel-card">
+        <div class="mb-4">
+          <h2 class="panel-title">Добавить edge-узел</h2>
+          <p class="panel-subtitle">
+            Ручное добавление инфраструктуры осталось, но live heartbeat теперь видно отдельно.
+          </p>
+        </div>
+        <form action="/actions/nodes" method="post" class="space-y-3">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Имя узла</span>
+              <input class="input" type="text" name="name" placeholder="Edge MAD-01" required />
+            </label>
+            <label class="field">
+              <span>Tier</span>
+              <select class="input" name="tier">
+                <option value="public">public</option>
+                <option value="premium">premium</option>
+                <option value="censored">censored</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="field">
+              <span>Host</span>
+              <input class="input" type="text" name="host" placeholder="203.0.113.10" required />
+            </label>
+            <label class="field">
+              <span>Port</span>
+              <input class="input" type="number" name="port" value="{{ node_defaults.port }}" min="1" max="65535" required />
+            </label>
+          </div>
+          <label class="field">
+            <span>Регион</span>
+            <input class="input" type="text" name="region" placeholder="Madrid" required />
+          </label>
+          <label class="field">
+            <span>MD5 fingerprint</span>
+            <input class="input font-mono" type="text" name="md5_fingerprint" placeholder="a5bc..." />
+          </label>
+          <button class="btn btn-secondary w-full" type="submit">Добавить узел</button>
+        </form>
+      </section>
+
+      <section class="panel-card">
+        <div class="grid gap-4 sm:grid-cols-3">
+          <article class="metric-card">
+            <span class="metric-label">Online Nodes</span>
+            <strong class="metric-value">{{ overview.online_nodes }}</strong>
+            <span class="metric-note">Всего активных узлов</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Agent Nodes</span>
+            <strong class="metric-value">{{ data_sources.agent_nodes_total }}</strong>
+            <span class="metric-note">С node-controller</span>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Default Port</span>
+            <strong class="metric-value">{{ node_defaults.port }}</strong>
+            <span class="metric-note">Для новых нод</span>
+          </article>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel-card space-y-4">
+      <div>
+        <h2 class="panel-title">Инфраструктура FPTN</h2>
+        <p class="panel-subtitle">
+          Отдельный раздел для нод: heartbeat, uptime, connections, load и их источник.
+        </p>
+      </div>
+      {% include "_nodes_grid.html" %}
+    </section>
+  </div>
+{% endblock %}

@@ -1,2 +1,190 @@
-# Phantom
-FPTN Panel 
+# Phantom Control Plane
+
+Админ-панель для VPN/proxy вокруг `FPTN` с shadcn-подобным интерфейсом и рабочим backend-функционалом:
+
+- управление пользователями: создание, удаление, заморозка, продление подписок;
+- генерация и сброс FPTN access keys;
+- мониторинг активных IP, сессий, трафика и edge-узлов;
+- синхронизация конфигов в совместимые файлы `FPTN`.
+- поддержка lightweight node-controller для FPTN-ноды с heartbeat в панель.
+
+Полное руководство:
+
+- [MANUAL.md](/Users/astracat/Documents/Phantom/MANUAL.md)
+
+## Что умеет
+
+- пишет `users.list` в формате `FPTN`;
+- собирает `servers.json`, `premium_servers.json`, `servers_censored_zone.json`;
+- генерирует `.fptn`-конфиг и `fptn:` access link;
+- поддерживает дату истечения подписки и автоматическое отключение истёкших пользователей;
+- умеет читать live-метрики FPTN из `FPTN_PROMETHEUS_METRICS_URL`, если вы укажете URL вида:
+  - `https://your-fptn-host/api/v1/metrics/<secret>`
+
+## Запуск
+
+```bash
+python3 -m pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Открыть:
+
+- [http://127.0.0.1:8000](http://127.0.0.1:8000)
+
+## Переменные окружения
+
+```bash
+APP_NAME="Phantom Control Plane"
+DATABASE_PATH="./data/panel.db"
+FPTN_CONFIG_DIR="./fptn-config"
+FPTN_SERVICE_NAME="PHANTOM.NET"
+FPTN_PROMETHEUS_METRICS_URL=""
+NODE_CONTROLLER_SHARED_TOKEN="phantom-node-shared-token"
+BILLING_API_TOKEN="phantom-billing-token"
+PHANTOM_SEED_DEMO="true"
+PANEL_TIMEZONE="Europe/Moscow"
+PANEL_HOST="0.0.0.0"
+PANEL_PORT="8000"
+```
+
+## Что появится в `FPTN_CONFIG_DIR`
+
+- `users.list`
+- `servers.json`
+- `premium_servers.json`
+- `servers_censored_zone.json`
+- `service_name.txt`
+
+## Примечание по интеграции
+
+Панель уже синхронизирует пользователей и server lists в формате `FPTN`. Если захотите, следующим шагом можно вынести её в отдельный API-слой, добавить авторизацию админов, Prometheus polling history и прямую работу с несколькими FPTN master/server-инстансами.
+
+## Node Controller
+
+Для подключения Linux-ноды с FPTN используйте агент из каталога [node-controller/README.md](/Users/astracat/Documents/Phantom/node-controller/README.md). Он шлёт в панель:
+
+- uptime;
+- load average;
+- CPU / memory / disk;
+- throughput интерфейса;
+- текущее число соединений;
+- `fptn_active_sessions`, если доступен локальный metrics endpoint.
+
+One-shot деплой ноды:
+
+```bash
+cd /Users/astracat/Documents/Phantom/node-controller
+sudo bash auto-deploy.sh \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --node-name "Edge AMS-01" \
+  --node-host 1.2.3.4 \
+  --region Amsterdam
+```
+
+Панель тоже может работать без домена и без SSL, например на `http://IP:8000`. Порт FPTN-ноды теперь можно задать в блоке `Node Defaults` внутри панели, и node-controller будет подхватывать его автоматически, если локально он не указан.
+
+## Production Deploy
+
+Для production есть one-shot деплой панели через `systemd`.
+
+Самый простой вариант:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash easy-deploy.sh
+```
+
+Если нужен другой порт:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash easy-deploy.sh --port 8080
+```
+
+Этот скрипт сам вызывает production deploy, подсказывает адрес панели и показывает, где смотреть сервис.
+
+На Linux-сервере:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash deploy/panel-auto-deploy.sh \
+  --panel-host 0.0.0.0 \
+  --panel-port 8000 \
+  --node-token phantom-node-shared-token \
+  --billing-token phantom-billing-token
+```
+
+Скрипт сам:
+
+- копирует проект в `/opt/phantom-control-plane`;
+- создаёт venv и ставит зависимости;
+- создаёт `/etc/phantom-control-plane.env`;
+- ставит `systemd` unit;
+- включает автозапуск и поднимает сервис;
+- выводит URL панели и токены для node-controller и billing API.
+
+Для совсем простого запуска используй [easy-deploy.sh](/Users/astracat/Documents/Phantom/easy-deploy.sh), а если нужен полный контроль над путями и env, используй [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh).
+
+После деплоя:
+
+```bash
+systemctl status phantom-control-plane.service
+journalctl -u phantom-control-plane.service -f
+```
+
+Шаблон env-файла лежит в [deploy/panel.env.example](/Users/astracat/Documents/Phantom/deploy/panel.env.example), unit-файл в [deploy/phantom-control-plane.service](/Users/astracat/Documents/Phantom/deploy/phantom-control-plane.service), а сам one-shot скрипт в [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh).
+
+## Billing API
+
+Для интеграции с биллингом панель теперь умеет отдельный JSON API с bearer-токеном `BILLING_API_TOKEN`. Документация также доступна через FastAPI Swagger:
+
+- `http://IP:PORT/docs`
+
+Основные endpoints:
+
+- `GET /api/v1/billing/users/{username}`: получить полные данные пользователя, подписки и access key.
+- `GET /api/v1/billing/subscriptions/check?username=...`: проверить статус подписки.
+- `POST /api/v1/billing/users/upsert`: создать или обновить подписку и пользователя из биллинга.
+- `POST /api/v1/billing/subscriptions/extend`: продлить подписку на `N` дней.
+- `POST /api/v1/billing/subscriptions/status`: активировать, заморозить или отключить пользователя.
+- `POST /api/v1/billing/subscriptions/speed`: выдать `full speed` или ограничить Mbps.
+- `GET /api/v1/billing/access-keys/{username}`: забрать текущий ключ доступа.
+- `POST /api/v1/billing/access-keys/rotate`: перевыпустить ключ доступа.
+
+Примеры:
+
+```bash
+curl -H "Authorization: Bearer phantom-billing-token" \
+  http://127.0.0.1:8000/api/v1/billing/subscriptions/check?username=client01
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/billing/users/upsert \
+  -H "Authorization: Bearer phantom-billing-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "newcustomer",
+    "plan_name": "pro-100",
+    "billing_customer_id": "cus_001",
+    "billing_subscription_id": "sub_001",
+    "bandwidth_mbps": 100,
+    "speed_mode": "limited",
+    "subscription_days": 30,
+    "is_premium": true,
+    "status": "active"
+  }'
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/billing/subscriptions/speed \
+  -H "Authorization: Bearer phantom-billing-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "newcustomer",
+    "speed_mode": "unlimited"
+  }'
+```
+
+API возвращает в ответе нормализованные данные пользователя: статус, срок подписки, effective speed, premium flag, billing IDs и готовый access key для выдачи клиенту.

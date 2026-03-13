@@ -1,0 +1,7 @@
+{% if flash_message %}
+  <div class="flash {{ 'flash-error' if flash_level == 'error' else 'flash-success' }}">
+    {{ flash_message }}
+  </div>
+{% endif %}
+
+<div id="clipboard-status" class="clipboard-status opacity-0"></div>

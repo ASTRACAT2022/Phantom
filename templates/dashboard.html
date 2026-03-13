@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="space-y-6">
+    {% include "_flash.html" %}
+    {% include "_accuracy.html" %}
+
+    <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <article class="metric-card">
+        <span class="metric-label">Пользователи</span>
+        <strong class="metric-value">{{ overview.total_users }}</strong>
+        <span class="metric-note">{{ overview.active_subscriptions }} с активной подпиской</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Сессии онлайн</span>
+        <strong class="metric-value">{{ overview.active_sessions }}</strong>
+        <span class="metric-note">{{ overview.active_ips }} активных IP</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Трафик In</span>
+        <strong class="metric-value">{{ overview.total_ingress }}</strong>
+        <span class="metric-note">Источник: {{ data_sources.traffic }}</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Трафик Out</span>
+        <strong class="metric-value">{{ overview.total_egress }}</strong>
+        <span class="metric-note">{{ overview.expiring_soon }} скоро истекают</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Ноды онлайн</span>
+        <strong class="metric-value">{{ overview.online_nodes }}</strong>
+        <span class="metric-note">{{ overview.agent_nodes_online }} live agent nodes</span>
+      </article>
+    </section>
+
+    <section class="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
+      <div class="panel-card space-y-4">
+        <div>
+          <h2 class="panel-title">Traffic Overview</h2>
+          <p class="panel-subtitle">
+            Раздел с графиком только для верхнеуровневого обзора. Детальная работа с пользователями и сессиями вынесена в отдельные разделы.
+          </p>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="trafficChart"></canvas>
+        </div>
+      </div>
+
+      <div class="space-y-6">
+        <section class="panel-card">
+          <h2 class="panel-title">Операционные алерты</h2>
+          <div class="mt-4 grid gap-3">
+            {% for alert in alerts %}
+              <div class="alert-tile">{{ alert }}</div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="panel-card">
+          <h2 class="panel-title">Быстрый переход</h2>
+          <div class="mt-4 grid gap-3">
+            <a class="quick-link" href="/users">Управление пользователями и ключами</a>
+            <a class="quick-link" href="/sessions">Активные IP и текущие сессии</a>
+            <a class="quick-link" href="/nodes">Инфраструктура и heartbeat нод</a>
+            <a class="quick-link" href="/settings">Настройки, defaults и ручная синхронизация</a>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="grid gap-6 xl:grid-cols-3">
+      <div class="panel-card xl:col-span-1">
+        <h2 class="panel-title">Скоро истекают</h2>
+        <div class="mt-4 space-y-3">
+          {% for user in expiring_users %}
+            <div class="list-row">
+              <div>
+                <div class="font-semibold">{{ user.username }}</div>
+                <div class="text-xs text-slate-500">{{ user.expires_human }}</div>
+              </div>
+              <div class="text-sm text-slate-500">{{ user.bandwidth_mbps }} Mbps</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="panel-card xl:col-span-1">
+        <h2 class="panel-title">Горячие узлы</h2>
+        <div class="mt-4 space-y-3">
+          {% for node in hot_nodes %}
+            <div class="list-row">
+              <div>
+                <div class="font-semibold">{{ node.name }}</div>
+                <div class="text-xs text-slate-500">{{ node.host }}:{{ node.port }}</div>
+              </div>
+              <div class="text-sm text-slate-500">CPU {{ node.cpu_load }}%</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="panel-card xl:col-span-1">
+        <h2 class="panel-title">Последние сессии</h2>
+        <div class="mt-4 space-y-3">
+          {% for session in recent_sessions %}
+            <div class="list-row">
+              <div>
+                <div class="font-semibold">{{ session.username }}</div>
+                <div class="text-xs text-slate-500">{{ session.ip_address }} · {{ session.node_name }}</div>
+              </div>
+              <div class="text-sm text-slate-500">{{ session.last_seen_human }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const chartSource = {{ traffic_chart_json | safe }};
+    const ctx = document.getElementById("trafficChart");
+    if (ctx) {
+      new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: chartSource.labels,
+          datasets: [
+            { label: "Ingress Mbps", data: chartSource.ingress, borderColor: "#0f766e", backgroundColor: "rgba(15, 118, 110, 0.12)", tension: 0.35, fill: true },
+            { label: "Egress Mbps", data: chartSource.egress, borderColor: "#1d4ed8", backgroundColor: "rgba(29, 78, 216, 0.10)", tension: 0.35, fill: true },
+            { label: "Active Users", data: chartSource.active_users, borderColor: "#ea580c", backgroundColor: "rgba(234, 88, 12, 0.08)", tension: 0.35, fill: false, yAxisID: "y1" }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: { legend: { labels: { color: "#334155", usePointStyle: true } } },
+          scales: {
+            x: { ticks: { color: "#64748b" }, grid: { color: "rgba(148, 163, 184, 0.12)" } },
+            y: { ticks: { color: "#64748b" }, grid: { color: "rgba(148, 163, 184, 0.12)" } },
+            y1: { position: "right", ticks: { color: "#64748b" }, grid: { drawOnChartArea: false } }
+          }
+        }
+      });
+    }
+  </script>
+{% endblock %}

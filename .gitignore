@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.env
+*.log
+.pytest_cache/
+data/*.db
+fptn-config/*.json
+fptn-config/*.list
+fptn-config/*.txt
