@@ -104,6 +104,7 @@ class LiveMetrics:
     total_incoming_bytes: int
     total_outgoing_bytes: int
     per_user: dict[str, dict[str, int]]
+    per_session: dict[str, dict[str, Any]]
     message: str
 
 
@@ -909,7 +910,7 @@ class ControlPlaneService:
 
     def _load_remote_metrics(self) -> LiveMetrics:
         if not self.settings.metrics_url:
-            return LiveMetrics(False, 0, 0, 0, {}, "FPTN metrics URL is not configured.")
+            return LiveMetrics(False, 0, 0, 0, {}, {}, "FPTN metrics URL is not configured.")
 
         try:
             request_kwargs: dict[str, Any] = {"timeout": 3}
@@ -922,15 +923,23 @@ class ControlPlaneService:
             with urlopen(self.settings.metrics_url, **request_kwargs) as response:
                 body = response.read().decode("utf-8")
         except URLError as exc:
-            return LiveMetrics(False, 0, 0, 0, {}, f"Metrics unavailable: {exc.reason}")
+            return LiveMetrics(False, 0, 0, 0, {}, {}, f"Metrics unavailable: {exc.reason}")
         except Exception as exc:  # pragma: no cover - defensive fallback
-            return LiveMetrics(False, 0, 0, 0, {}, f"Metrics unavailable: {exc}")
+            return LiveMetrics(False, 0, 0, 0, {}, {}, f"Metrics unavailable: {exc}")
 
         active_sessions = 0
         total_incoming = 0
         total_outgoing = 0
         per_user: dict[str, dict[str, int]] = defaultdict(
             lambda: {"incoming_bytes": 0, "outgoing_bytes": 0}
+        )
+        per_session: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {
+                "session_id": "",
+                "username": "unknown",
+                "incoming_bytes": 0,
+                "outgoing_bytes": 0,
+            }
         )
 
         metric_pattern = re.compile(
@@ -958,11 +967,21 @@ class ControlPlaneService:
                 active_sessions = int(value)
             elif name == "fptn_user_incoming_traffic_bytes":
                 username = labels.get("username", "unknown")
+                session_id = labels.get("session_id", "")
                 per_user[username]["incoming_bytes"] += int(value)
+                if session_id:
+                    per_session[session_id]["session_id"] = session_id
+                    per_session[session_id]["username"] = username
+                    per_session[session_id]["incoming_bytes"] += int(value)
                 total_incoming += int(value)
             elif name == "fptn_user_outgoing_traffic_bytes":
                 username = labels.get("username", "unknown")
+                session_id = labels.get("session_id", "")
                 per_user[username]["outgoing_bytes"] += int(value)
+                if session_id:
+                    per_session[session_id]["session_id"] = session_id
+                    per_session[session_id]["username"] = username
+                    per_session[session_id]["outgoing_bytes"] += int(value)
                 total_outgoing += int(value)
 
         return LiveMetrics(
@@ -971,6 +990,7 @@ class ControlPlaneService:
             total_incoming,
             total_outgoing,
             dict(per_user),
+            dict(per_session),
             "Live FPTN metrics connected.",
         )
 
@@ -990,7 +1010,7 @@ class ControlPlaneService:
         live_metrics: LiveMetrics,
         node_rows: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        if not live_metrics.connected or not live_metrics.per_user:
+        if not live_metrics.connected:
             return []
 
         preferred_node_name = next(
@@ -1002,11 +1022,33 @@ class ControlPlaneService:
             "Live FPTN",
         )
         synthetic_rows: list[dict[str, Any]] = []
+        for session_id, remote in sorted(live_metrics.per_session.items()):
+            incoming_bytes = int(remote.get("incoming_bytes", 0) or 0)
+            outgoing_bytes = int(remote.get("outgoing_bytes", 0) or 0)
+            synthetic_rows.append(
+                {
+                    "username": remote.get("username", "unknown"),
+                    "client_version": f"live metrics / session {session_id}",
+                    "ip_address": "n/a",
+                    "vpn_ipv4": "n/a",
+                    "node_name": preferred_node_name,
+                    "rx_mbps": 0,
+                    "tx_mbps": 0,
+                    "ingress_bytes": incoming_bytes,
+                    "egress_bytes": outgoing_bytes,
+                    "ingress_human": human_bytes(incoming_bytes),
+                    "egress_human": human_bytes(outgoing_bytes),
+                    "connected_at_human": "live",
+                    "last_seen_human": "live",
+                    "status": "active",
+                }
+            )
+        if synthetic_rows:
+            return synthetic_rows
+
         for username, remote in sorted(live_metrics.per_user.items()):
             incoming_bytes = int(remote.get("incoming_bytes", 0) or 0)
             outgoing_bytes = int(remote.get("outgoing_bytes", 0) or 0)
-            if incoming_bytes <= 0 and outgoing_bytes <= 0:
-                continue
             synthetic_rows.append(
                 {
                     "username": username,
@@ -1020,6 +1062,32 @@ class ControlPlaneService:
                     "egress_bytes": outgoing_bytes,
                     "ingress_human": human_bytes(incoming_bytes),
                     "egress_human": human_bytes(outgoing_bytes),
+                    "connected_at_human": "live",
+                    "last_seen_human": "live",
+                    "status": "active",
+                }
+            )
+        if synthetic_rows:
+            return synthetic_rows
+
+        active_session_count = max(
+            int(live_metrics.active_sessions or 0),
+            sum(int(node.get("fptn_active_sessions", 0) or 0) for node in node_rows),
+        )
+        for index in range(active_session_count):
+            synthetic_rows.append(
+                {
+                    "username": f"unknown-session-{index + 1}",
+                    "client_version": "live session count",
+                    "ip_address": "n/a",
+                    "vpn_ipv4": "n/a",
+                    "node_name": preferred_node_name,
+                    "rx_mbps": 0,
+                    "tx_mbps": 0,
+                    "ingress_bytes": 0,
+                    "egress_bytes": 0,
+                    "ingress_human": human_bytes(0),
+                    "egress_human": human_bytes(0),
                     "connected_at_human": "live",
                     "last_seen_human": "live",
                     "status": "active",
@@ -1213,6 +1281,9 @@ class ControlPlaneService:
         user_identity_map = {
             user["id"]: user["username"] for user in users
         }
+        live_session_counts: dict[str, int] = defaultdict(int)
+        for remote_session in live_metrics.per_session.values():
+            live_session_counts[remote_session.get("username", "unknown")] += 1
         user_stats: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "ingress_bytes": 0,
@@ -1267,7 +1338,10 @@ class ControlPlaneService:
                         if user.get("speed_mode") == "unlimited"
                         else f'{int(user["bandwidth_mbps"])} Mbps'
                     ),
-                    "active_sessions": stats["active_sessions"],
+                    "active_sessions": max(
+                        stats["active_sessions"],
+                        live_session_counts.get(user["username"], 0),
+                    ),
                     "active_ips": len(stats["active_ips"]),
                     "ingress_bytes": ingress_bytes,
                     "egress_bytes": egress_bytes,
@@ -1323,6 +1397,10 @@ class ControlPlaneService:
         )
         total_rx = sum(float(session["rx_mbps"]) for session in sessions if session["status"] == "active")
         total_tx = sum(float(session["tx_mbps"]) for session in sessions if session["status"] == "active")
+        if total_rx <= 0:
+            total_rx = sum(float(node.get("network_rx_mbps", 0) or 0) for node in node_rows)
+        if total_tx <= 0:
+            total_tx = sum(float(node.get("network_tx_mbps", 0) or 0) for node in node_rows)
         online_nodes = sum(1 for node in node_rows if node["status_display"] != "offline")
         expired_users = sum(1 for user in user_rows if user["status"] == "expired")
         agent_nodes_total = sum(1 for node in node_rows if node["source"] == "agent")
@@ -1350,6 +1428,14 @@ class ControlPlaneService:
             data_accuracy_notes.append(
                 "Суммарный трафик пользователей и счётчик сессий приходят из live-метрик FPTN."
             )
+            if live_metrics.per_session:
+                data_accuracy_notes.append(
+                    "Список live-сессий строится по session_id и username из Prometheus-метрик FPTN."
+                )
+            elif live_metrics.active_sessions:
+                data_accuracy_notes.append(
+                    "Если FPTN отдал только общий счётчик сессий без session traffic, панель покажет fallback по live session count."
+                )
         else:
             data_accuracy_notes.append(
                 "Трафик и часть counters считаются из данных панели. Без live-метрик FPTN эти значения приблизительные."
@@ -1371,8 +1457,11 @@ class ControlPlaneService:
             "total_users": len(user_rows),
             "active_subscriptions": sum(1 for user in user_rows if user["status"] == "active"),
             "expiring_soon": expiring_soon,
-            "active_sessions": live_metrics.active_sessions or active_sessions,
-            "active_ips": active_ips,
+            "active_sessions": live_metrics.active_sessions
+            or sum(int(node.get("fptn_active_sessions", 0) or 0) for node in node_rows)
+            or active_sessions,
+            "active_ips": active_ips
+            or sum(int(node.get("connections_current", 0) or 0) for node in node_rows),
             "total_ingress": human_bytes(
                 live_metrics.total_incoming_bytes or total_ingress
             ),
