@@ -71,6 +71,18 @@ PANEL_PORT="8000"
 - текущее число соединений;
 - `fptn_active_sessions`, если доступен локальный metrics endpoint.
 
+One-line установка прямо на ноде:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --node-name "Edge AMS-01" \
+  --node-host 1.2.3.4 \
+  --region Amsterdam
+```
+
 One-shot деплой ноды:
 
 ```bash

@@ -21,6 +21,35 @@ sudo systemctl restart phantom-node-controller.service
 sudo journalctl -u phantom-node-controller.service -f
 ```
 
+## One-line install через GitHub
+
+Если хочешь ставить ноду вообще без `git clone`, прямо одной командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --node-name "Edge AMS-01" \
+  --node-host 1.2.3.4 \
+  --region Amsterdam
+```
+
+Если нужен другой порт FPTN:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASTRACAT2022/Phantom/main/node-controller/install-via-github.sh | \
+sudo bash -s -- \
+  --panel-url http://203.0.113.10:8000 \
+  --shared-token phantom-node-shared-token \
+  --node-name "Edge AMS-01" \
+  --node-host 1.2.3.4 \
+  --node-port 9443 \
+  --region Amsterdam
+```
+
+Этот bootstrap-скрипт сам скачает `agent.py`, `phantom-node-controller.service` и `auto-deploy.sh` из GitHub, после чего поставит сервис.
+
 ## One-shot автодеплой
 
 Если хочешь один запуск без ручного редактирования env-файла:
@@ -54,6 +83,8 @@ sudo bash auto-deploy.sh \
 ```bash
 http://SERVER_IP:8000
 ```
+
+Важно: для `curl` нужно использовать именно `raw.githubusercontent.com`, а не обычную HTML-ссылку `github.com/...`, иначе скачается страница GitHub, а не shell-скрипт.
 
 А FPTN-нода может слушать любой свободный порт, например `8443`, `9443` или `10443`. Этот порт можно:
 
