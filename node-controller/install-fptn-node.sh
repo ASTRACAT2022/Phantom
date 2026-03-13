@@ -20,6 +20,11 @@ PROXY_DOMAIN="${FPTN_DEFAULT_PROXY_DOMAIN:-vk.ru}"
 FPTN_IMAGE="${FPTN_SERVER_IMAGE:-fptnvpn/fptn-vpn-server:latest}"
 FPTN_DIR="${FPTN_SERVER_DIR:-/opt/fptn-server}"
 FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/opt/fptn-server-data}"
+ALLOWED_SNI_LIST="${FPTN_ALLOWED_SNI_LIST:-}"
+PROMETHEUS_SECRET_ACCESS_KEY="${FPTN_PROMETHEUS_SECRET_ACCESS_KEY:-}"
+REMOTE_SERVER_AUTH_HOST="${FPTN_REMOTE_SERVER_AUTH_HOST:-127.0.0.1}"
+REMOTE_SERVER_AUTH_PORT="${FPTN_REMOTE_SERVER_AUTH_PORT:-8080}"
+MAX_ACTIVE_SESSIONS_PER_USER="${FPTN_MAX_ACTIVE_SESSIONS_PER_USER:-3}"
 LOCAL_METRICS_URL="${LOCAL_FPTN_METRICS_URL:-}"
 OPEN_UFW="false"
 REPLACE_EXISTING="false"
@@ -55,6 +60,9 @@ Optional:
   --region REGION            Node region label
   --tier public|premium|censored
   --proxy-domain DOMAIN      FPTN DEFAULT_PROXY_DOMAIN, default: vk.ru
+  --allowed-sni-list CSV     Default: proxy domain
+  --prometheus-key KEY       Secret for FPTN metrics, default: auto-generated
+  --max-sessions COUNT       Default: 3
   --metrics-url URL          Forwarded to node-controller as LOCAL_FPTN_METRICS_URL
   --fptn-image IMAGE         Docker image, default: fptnvpn/fptn-vpn-server:latest
   --fptn-dir PATH            Docker compose dir, default: /opt/fptn-server
@@ -93,6 +101,13 @@ ensure_command() {
     echo "Required command not found: $1" >&2
     exit 1
   fi
+}
+
+random_token() {
+  python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(24))
+PY
 }
 
 detect_host_ip() {
@@ -136,6 +151,13 @@ write_compose_file() {
   install -d "${FPTN_DIR}"
   install -d "${FPTN_CONFIG_DIR}"
 
+  if [[ -z "${ALLOWED_SNI_LIST}" ]]; then
+    ALLOWED_SNI_LIST="${PROXY_DOMAIN}"
+  fi
+  if [[ -z "${PROMETHEUS_SECRET_ACCESS_KEY}" ]]; then
+    PROMETHEUS_SECRET_ACCESS_KEY="$(random_token)"
+  fi
+
   cat > "${FPTN_DIR}/docker-compose.yml" <<EOF
 services:
   fptn-server:
@@ -151,6 +173,16 @@ services:
       - net.ipv6.conf.all.forwarding=1
       - net.ipv4.conf.all.rp_filter=0
       - net.ipv4.conf.default.rp_filter=0
+    ulimits:
+      nproc:
+        soft: 524288
+        hard: 524288
+      nofile:
+        soft: 524288
+        hard: 524288
+      memlock:
+        soft: 524288
+        hard: 524288
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
@@ -160,10 +192,20 @@ services:
     environment:
       ENABLE_DETECT_PROBING: "true"
       DEFAULT_PROXY_DOMAIN: "${PROXY_DOMAIN}"
-      ALLOWED_SNI_LIST: ""
+      ALLOWED_SNI_LIST: "${ALLOWED_SNI_LIST}"
       DISABLE_BITTORRENT: "true"
+      PROMETHEUS_SECRET_ACCESS_KEY: "${PROMETHEUS_SECRET_ACCESS_KEY}"
       USE_REMOTE_SERVER_AUTH: "false"
+      REMOTE_SERVER_AUTH_HOST: "${REMOTE_SERVER_AUTH_HOST}"
+      REMOTE_SERVER_AUTH_PORT: "${REMOTE_SERVER_AUTH_PORT}"
+      MAX_ACTIVE_SESSIONS_PER_USER: "${MAX_ACTIVE_SESSIONS_PER_USER}"
       SERVER_EXTERNAL_IPS: "${NODE_HOST}"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "pgrep dnsmasq && pgrep fptn-server"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 EOF
 }
 
@@ -287,6 +329,18 @@ while [[ $# -gt 0 ]]; do
       PROXY_DOMAIN="$2"
       shift 2
       ;;
+    --allowed-sni-list)
+      ALLOWED_SNI_LIST="$2"
+      shift 2
+      ;;
+    --prometheus-key)
+      PROMETHEUS_SECRET_ACCESS_KEY="$2"
+      shift 2
+      ;;
+    --max-sessions)
+      MAX_ACTIVE_SESSIONS_PER_USER="$2"
+      shift 2
+      ;;
     --metrics-url)
       LOCAL_METRICS_URL="$2"
       shift 2
@@ -395,6 +449,7 @@ echo "FPTN node bootstrap completed."
 echo "FPTN compose: ${FPTN_DIR}/docker-compose.yml"
 echo "FPTN config:  ${FPTN_CONFIG_DIR}"
 echo "Public port:  ${NODE_HOST}:${NODE_PORT}"
+echo "Metrics key:  ${PROMETHEUS_SECRET_ACCESS_KEY}"
 echo
 echo "Verify:"
 echo "  docker ps"
