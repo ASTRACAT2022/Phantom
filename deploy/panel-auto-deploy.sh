@@ -85,6 +85,11 @@ print(random.randint(20000, 60000))
 PY
 }
 
+is_local_metrics_url() {
+  local value="$1"
+  [[ "${value}" == http://127.0.0.1:* || "${value}" == http://localhost:* || "${value}" == https://127.0.0.1:* || "${value}" == https://localhost:* ]]
+}
+
 read_env_var() {
   local key="$1"
   local env_file="${2:-${ENV_FILE}}"
@@ -94,20 +99,75 @@ read_env_var() {
   sed -n "s/^${key}=\"\\(.*\\)\"$/\\1/p" "${env_file}" | head -n 1
 }
 
-detect_local_fptn_metrics_url() {
+detect_local_fptn_metrics_candidates() {
   local compose_file="/opt/fptn-server/docker-compose.yml"
+  local proxy_port=""
   local port=""
   local secret=""
+  local server_ips=""
   if [[ ! -f "${compose_file}" ]]; then
     return 0
   fi
 
+  proxy_port="$(sed -n 's/^[[:space:]]*-[[:space:]]*"127\.0\.0\.1:\([0-9]\+\):80\/tcp"[[:space:]]*$/\1/p' "${compose_file}" | head -n 1)"
   port="$(sed -n 's/^[[:space:]]*-[[:space:]]*"\([0-9]\+\):443\/tcp"[[:space:]]*$/\1/p' "${compose_file}" | head -n 1)"
   secret="$(sed -n 's/^[[:space:]]*PROMETHEUS_SECRET_ACCESS_KEY:[[:space:]]*"\([^"]\+\)"[[:space:]]*$/\1/p' "${compose_file}" | head -n 1)"
-  if [[ -z "${port}" || -z "${secret}" ]]; then
+  server_ips="$(sed -n 's/^[[:space:]]*SERVER_EXTERNAL_IPS:[[:space:]]*"\([^"]\+\)"[[:space:]]*$/\1/p' "${compose_file}" | head -n 1)"
+  if [[ -z "${secret}" ]]; then
     return 0
   fi
-  printf 'https://127.0.0.1:%s/api/v1/metrics/%s\n' "${port}" "${secret}"
+  if [[ -n "${proxy_port}" ]]; then
+    printf 'http://127.0.0.1:%s/api/v1/metrics/%s\n' "${proxy_port}" "${secret}"
+    printf 'http://localhost:%s/api/v1/metrics/%s\n' "${proxy_port}" "${secret}"
+  fi
+  if [[ -n "${port}" ]]; then
+    printf 'https://127.0.0.1:%s/api/v1/metrics/%s\n' "${port}" "${secret}"
+    printf 'https://localhost:%s/api/v1/metrics/%s\n' "${port}" "${secret}"
+    if [[ -n "${server_ips}" ]]; then
+      tr ',' '\n' <<< "${server_ips}" | sed 's/^ *//;s/ *$//' | while read -r host; do
+        if [[ -n "${host}" ]]; then
+          printf 'https://%s:%s/api/v1/metrics/%s\n' "${host}" "${port}" "${secret}"
+        fi
+      done
+    fi
+  fi
+}
+
+metrics_url_returns_fptn_data() {
+  local url="$1"
+  local curl_args=(-fsS --max-time 3)
+  if [[ "${url}" == https://* ]]; then
+    curl_args+=(-k)
+  fi
+  local body=""
+  if ! body="$(curl "${curl_args[@]}" "${url}" 2>/dev/null || true)"; then
+    return 1
+  fi
+  if [[ -z "${body}" ]]; then
+    return 1
+  fi
+  grep -qE 'fptn_active_sessions|fptn_user_(incoming|outgoing)_traffic_bytes' <<< "${body}"
+}
+
+choose_metrics_url() {
+  local explicit_url="$1"
+  local existing_url="$2"
+  local candidate=""
+  if [[ -n "${explicit_url}" ]]; then
+    printf '%s\n' "${explicit_url}"
+    return 0
+  fi
+  while read -r candidate; do
+    if [[ -n "${candidate}" ]] && metrics_url_returns_fptn_data "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done < <(detect_local_fptn_metrics_candidates)
+  if [[ -n "${existing_url}" ]]; then
+    printf '%s\n' "${existing_url}"
+    return 0
+  fi
+  return 0
 }
 
 ensure_root() {
@@ -294,12 +354,9 @@ write_env_file() {
   if [[ ! -f "${ENV_FILE}" ]]; then
     install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${ENV_FILE}"
   fi
-  if [[ -z "${FPTN_PROMETHEUS_METRICS_URL}" ]]; then
-    FPTN_PROMETHEUS_METRICS_URL="$(read_env_var "FPTN_PROMETHEUS_METRICS_URL" "${ENV_FILE}")"
-  fi
-  if [[ -z "${FPTN_PROMETHEUS_METRICS_URL}" ]]; then
-    FPTN_PROMETHEUS_METRICS_URL="$(detect_local_fptn_metrics_url)"
-  fi
+  local existing_metrics_url=""
+  existing_metrics_url="$(read_env_var "FPTN_PROMETHEUS_METRICS_URL" "${ENV_FILE}")"
+  FPTN_PROMETHEUS_METRICS_URL="$(choose_metrics_url "${FPTN_PROMETHEUS_METRICS_URL}" "${existing_metrics_url}")"
 
   set_env_var "APP_NAME" "${APP_NAME}"
   set_env_var "DATABASE_URL" "${DATABASE_URL}"
@@ -307,8 +364,10 @@ write_env_file() {
   set_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
   set_env_var "FPTN_SERVICE_NAME" "${FPTN_SERVICE_NAME}"
   set_env_var "FPTN_PROMETHEUS_METRICS_URL" "${FPTN_PROMETHEUS_METRICS_URL}"
-  if [[ "${FPTN_PROMETHEUS_METRICS_URL}" == https://127.0.0.1:* || "${FPTN_PROMETHEUS_METRICS_URL}" == https://localhost:* ]]; then
+  if is_local_metrics_url "${FPTN_PROMETHEUS_METRICS_URL}" && [[ "${FPTN_PROMETHEUS_METRICS_URL}" == https://* ]]; then
     set_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "true"
+  elif [[ "${FPTN_PROMETHEUS_METRICS_URL}" == http://* ]]; then
+    set_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "false"
   fi
   set_env_var "NODE_CONTROLLER_SHARED_TOKEN" "${NODE_CONTROLLER_SHARED_TOKEN}"
   set_env_var "BILLING_API_TOKEN" "${BILLING_API_TOKEN}"
@@ -371,6 +430,9 @@ Backups:
   run_now=sudo bash /opt/phantom-control-plane/deploy/backup.sh
   restore=sudo bash /opt/phantom-control-plane/deploy/restore.sh --archive ${PHANTOM_BACKUP_DIR}/phantom-backup-YYYYMMDD-HHMMSS.tar.gz
 
+Metrics:
+  url=${FPTN_PROMETHEUS_METRICS_URL}
+
 Node gRPC:
   enabled=${NODE_AGENT_GRPC_ENABLED}
   target=${PANEL_HOST}:${NODE_AGENT_GRPC_PORT}
@@ -382,6 +444,7 @@ main() {
   parse_args "$@"
   ensure_root
   ensure_command python3
+  ensure_command curl
   ensure_command systemctl
   ensure_command install
   create_service_user
