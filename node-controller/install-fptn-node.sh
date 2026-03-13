@@ -300,6 +300,7 @@ open_firewall() {
 sync_local_panel_with_fptn() {
   local panel_host=""
   local panel_service_user=""
+  local local_metrics_url=""
   panel_host="$(detect_panel_host)"
   if [[ ! -f "${PANEL_ENV_FILE}" ]]; then
     return
@@ -321,7 +322,10 @@ sync_local_panel_with_fptn() {
     find "${FPTN_CONFIG_DIR}" -maxdepth 1 -type f -exec chmod 640 {} \;
   fi
 
+  local_metrics_url="https://127.0.0.1:${NODE_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
   set_panel_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
+  set_panel_env_var "FPTN_PROMETHEUS_METRICS_URL" "${local_metrics_url}"
+  set_panel_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "true"
   systemctl restart "${PANEL_SERVICE_NAME}"
 
   (
@@ -345,6 +349,10 @@ PY
 
 install_node_controller() {
   local installer_path="$1"
+  local effective_metrics_url="${LOCAL_METRICS_URL}"
+  if [[ -z "${effective_metrics_url}" ]]; then
+    effective_metrics_url="https://127.0.0.1:${NODE_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
+  fi
   local cmd=(
     bash "${installer_path}"
     --panel-url "${PANEL_URL}"
@@ -356,6 +364,7 @@ install_node_controller() {
     --node-port "${NODE_PORT}"
     --region "${NODE_REGION}"
     --cert-path "${FPTN_CONFIG_DIR}/server.crt"
+    --metrics-url "${effective_metrics_url}"
   )
 
   if [[ -n "${PANEL_GRPC_TARGET}" ]]; then
@@ -366,9 +375,6 @@ install_node_controller() {
   fi
   if [[ -n "${NODE_TIER}" ]]; then
     cmd+=(--tier "${NODE_TIER}")
-  fi
-  if [[ -n "${LOCAL_METRICS_URL}" ]]; then
-    cmd+=(--metrics-url "${LOCAL_METRICS_URL}")
   fi
   if [[ "${REPLACE_EXISTING}" == "true" ]]; then
     cmd+=(--replace-existing)

@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -192,7 +193,11 @@ def read_fptn_active_sessions(metrics_url: str, timeout: int) -> int:
     if not metrics_url:
         return 0
     try:
-        with urlopen(metrics_url, timeout=timeout) as response:
+        request_kwargs = {"timeout": timeout}
+        parsed_url = urlsplit(metrics_url)
+        if parsed_url.scheme == "https" and (parsed_url.hostname or "").strip().lower() in {"127.0.0.1", "localhost", "::1"}:
+            request_kwargs["context"] = ssl._create_unverified_context()
+        with urlopen(metrics_url, **request_kwargs) as response:
             payload = response.read().decode("utf-8")
     except Exception:
         return 0

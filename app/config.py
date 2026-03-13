@@ -15,6 +15,7 @@ class Settings:
     fptn_config_dir: Path
     service_name: str
     metrics_url: str
+    metrics_insecure_tls: bool
     node_agent_token: str
     billing_api_token: str
     admin_username: str
@@ -41,6 +42,7 @@ def load_settings() -> Settings:
         ),
         service_name=os.getenv("FPTN_SERVICE_NAME", "PHANTOM.NET"),
         metrics_url=os.getenv("FPTN_PROMETHEUS_METRICS_URL", "").strip(),
+        metrics_insecure_tls=os.getenv("FPTN_PROMETHEUS_INSECURE_TLS", "false").lower() == "true",
         node_agent_token=os.getenv("NODE_CONTROLLER_SHARED_TOKEN", "phantom-node-shared-token"),
         billing_api_token=os.getenv("BILLING_API_TOKEN", "phantom-billing-token"),
         admin_username=os.getenv("ADMIN_USERNAME", "admin").strip() or "admin",

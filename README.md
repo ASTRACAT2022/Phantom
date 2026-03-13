@@ -41,6 +41,7 @@ DATABASE_PATH="./data/panel.db"
 FPTN_CONFIG_DIR="./fptn-config"
 FPTN_SERVICE_NAME="PHANTOM.NET"
 FPTN_PROMETHEUS_METRICS_URL=""
+FPTN_PROMETHEUS_INSECURE_TLS="false"
 NODE_CONTROLLER_SHARED_TOKEN="phantom-node-shared-token"
 BILLING_API_TOKEN="phantom-billing-token"
 ADMIN_USERNAME="admin"
@@ -71,6 +72,12 @@ HTML-панель и `/docs` теперь закрыты admin-auth. После 
 ```bash
 NODE_AGENT_GRPC_ENABLED="true"
 NODE_AGENT_GRPC_PORT="51173"
+```
+
+Если `FPTN` использует self-signed сертификат и панель забирает metrics локально по `https://127.0.0.1:PORT/...`, включи:
+
+```bash
+FPTN_PROMETHEUS_INSECURE_TLS="true"
 ```
 
 ## Что появится в `FPTN_CONFIG_DIR`

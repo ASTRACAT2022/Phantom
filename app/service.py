@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import random
 import re
+import ssl
 import sqlite3
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator, Mapping, Optional, Union
+from urllib.parse import urlsplit
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -103,6 +105,11 @@ class LiveMetrics:
     total_outgoing_bytes: int
     per_user: dict[str, dict[str, int]]
     message: str
+
+
+def _is_local_hostname(hostname: str) -> bool:
+    candidate = (hostname or "").strip().lower()
+    return candidate in {"127.0.0.1", "localhost", "::1"}
 
 
 class RowAdapter(Mapping[str, Any]):
@@ -905,7 +912,14 @@ class ControlPlaneService:
             return LiveMetrics(False, 0, 0, 0, {}, "FPTN metrics URL is not configured.")
 
         try:
-            with urlopen(self.settings.metrics_url, timeout=3) as response:
+            request_kwargs: dict[str, Any] = {"timeout": 3}
+            parsed_url = urlsplit(self.settings.metrics_url)
+            if parsed_url.scheme == "https" and (
+                self.settings.metrics_insecure_tls or _is_local_hostname(parsed_url.hostname or "")
+            ):
+                request_kwargs["context"] = ssl._create_unverified_context()
+
+            with urlopen(self.settings.metrics_url, **request_kwargs) as response:
                 body = response.read().decode("utf-8")
         except URLError as exc:
             return LiveMetrics(False, 0, 0, 0, {}, f"Metrics unavailable: {exc.reason}")
@@ -970,6 +984,48 @@ class ControlPlaneService:
                 return "warning"
             return "offline"
         return node.get("status", "online")
+
+    def _synthetic_live_sessions(
+        self,
+        live_metrics: LiveMetrics,
+        node_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not live_metrics.connected or not live_metrics.per_user:
+            return []
+
+        preferred_node_name = next(
+            (
+                node["name"]
+                for node in node_rows
+                if node.get("status_display") == "online"
+            ),
+            "Live FPTN",
+        )
+        synthetic_rows: list[dict[str, Any]] = []
+        for username, remote in sorted(live_metrics.per_user.items()):
+            incoming_bytes = int(remote.get("incoming_bytes", 0) or 0)
+            outgoing_bytes = int(remote.get("outgoing_bytes", 0) or 0)
+            if incoming_bytes <= 0 and outgoing_bytes <= 0:
+                continue
+            synthetic_rows.append(
+                {
+                    "username": username,
+                    "client_version": "live metrics",
+                    "ip_address": "n/a",
+                    "vpn_ipv4": "n/a",
+                    "node_name": preferred_node_name,
+                    "rx_mbps": 0,
+                    "tx_mbps": 0,
+                    "ingress_bytes": incoming_bytes,
+                    "egress_bytes": outgoing_bytes,
+                    "ingress_human": human_bytes(incoming_bytes),
+                    "egress_human": human_bytes(outgoing_bytes),
+                    "connected_at_human": "live",
+                    "last_seen_human": "live",
+                    "status": "active",
+                }
+            )
+        return synthetic_rows
 
     def ingest_node_heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = (payload.get("agent_id") or "").strip()
@@ -1249,6 +1305,12 @@ class ControlPlaneService:
                 }
             )
 
+        display_sessions = session_rows
+        if not display_sessions:
+            synthetic_sessions = self._synthetic_live_sessions(live_metrics, node_rows)
+            if synthetic_sessions:
+                display_sessions = synthetic_sessions
+
         total_ingress = sum(user["ingress_bytes"] for user in user_rows)
         total_egress = sum(user["egress_bytes"] for user in user_rows)
         active_sessions = sum(1 for session in sessions if session["status"] == "active")
@@ -1342,7 +1404,7 @@ class ControlPlaneService:
         return {
             "overview": overview,
             "users": user_rows,
-            "sessions": session_rows,
+            "sessions": display_sessions,
             "nodes": node_rows,
             "alerts": alerts,
             "data_accuracy_notes": data_accuracy_notes,
@@ -1354,7 +1416,7 @@ class ControlPlaneService:
                 "manual_nodes_total": manual_nodes_total,
             },
             "expiring_users": expiring_users,
-            "recent_sessions": session_rows[:10],
+            "recent_sessions": display_sessions[:10],
             "hot_nodes": hot_nodes,
             "traffic_chart": traffic_chart,
             "traffic_chart_json": json.dumps(traffic_chart),
