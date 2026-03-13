@@ -85,6 +85,31 @@ print(random.randint(20000, 60000))
 PY
 }
 
+read_env_var() {
+  local key="$1"
+  local env_file="${2:-${ENV_FILE}}"
+  if [[ ! -f "${env_file}" ]]; then
+    return 0
+  fi
+  sed -n "s/^${key}=\"\\(.*\\)\"$/\\1/p" "${env_file}" | head -n 1
+}
+
+detect_local_fptn_metrics_url() {
+  local compose_file="/opt/fptn-server/docker-compose.yml"
+  local port=""
+  local secret=""
+  if [[ ! -f "${compose_file}" ]]; then
+    return 0
+  fi
+
+  port="$(sed -n 's/^[[:space:]]*-[[:space:]]*"\([0-9]\+\):443\/tcp"[[:space:]]*$/\1/p' "${compose_file}" | head -n 1)"
+  secret="$(sed -n 's/^[[:space:]]*PROMETHEUS_SECRET_ACCESS_KEY:[[:space:]]*"\([^"]\+\)"[[:space:]]*$/\1/p' "${compose_file}" | head -n 1)"
+  if [[ -z "${port}" || -z "${secret}" ]]; then
+    return 0
+  fi
+  printf 'https://127.0.0.1:%s/api/v1/metrics/%s\n' "${port}" "${secret}"
+}
+
 ensure_root() {
   if [[ "${EUID}" -ne 0 ]]; then
     echo "Run this script as root: sudo bash deploy/panel-auto-deploy.sh" >&2
@@ -269,6 +294,12 @@ write_env_file() {
   if [[ ! -f "${ENV_FILE}" ]]; then
     install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${ENV_FILE}"
   fi
+  if [[ -z "${FPTN_PROMETHEUS_METRICS_URL}" ]]; then
+    FPTN_PROMETHEUS_METRICS_URL="$(read_env_var "FPTN_PROMETHEUS_METRICS_URL" "${ENV_FILE}")"
+  fi
+  if [[ -z "${FPTN_PROMETHEUS_METRICS_URL}" ]]; then
+    FPTN_PROMETHEUS_METRICS_URL="$(detect_local_fptn_metrics_url)"
+  fi
 
   set_env_var "APP_NAME" "${APP_NAME}"
   set_env_var "DATABASE_URL" "${DATABASE_URL}"
@@ -276,6 +307,9 @@ write_env_file() {
   set_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
   set_env_var "FPTN_SERVICE_NAME" "${FPTN_SERVICE_NAME}"
   set_env_var "FPTN_PROMETHEUS_METRICS_URL" "${FPTN_PROMETHEUS_METRICS_URL}"
+  if [[ "${FPTN_PROMETHEUS_METRICS_URL}" == https://127.0.0.1:* || "${FPTN_PROMETHEUS_METRICS_URL}" == https://localhost:* ]]; then
+    set_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "true"
+  fi
   set_env_var "NODE_CONTROLLER_SHARED_TOKEN" "${NODE_CONTROLLER_SHARED_TOKEN}"
   set_env_var "BILLING_API_TOKEN" "${BILLING_API_TOKEN}"
   set_env_var "ADMIN_USERNAME" "${ADMIN_USERNAME}"
