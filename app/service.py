@@ -8,7 +8,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Union
+from typing import Any, Iterator, Mapping, Optional, Union
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -21,6 +21,13 @@ from .fptn import (
     normalize_username,
     write_fptn_config,
 )
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - optional production dependency
+    psycopg = None
+    dict_row = None
 
 
 UTC = timezone.utc
@@ -98,19 +105,138 @@ class LiveMetrics:
     message: str
 
 
+class RowAdapter(Mapping[str, Any]):
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        self._data = dict(data)
+        self._keys = list(self._data.keys())
+
+    def __getitem__(self, key: Union[str, int]) -> Any:
+        if isinstance(key, int):
+            return self._data[self._keys[key]]
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._data.get(key, default)
+
+
+class CursorResult:
+    def __init__(self, cursor: Any) -> None:
+        self.cursor = cursor
+        description = getattr(cursor, "description", None) or []
+        self.columns = [column[0] for column in description]
+
+    def _wrap(self, row: Any) -> Optional[RowAdapter]:
+        if row is None:
+            return None
+        if isinstance(row, RowAdapter):
+            return row
+        if isinstance(row, Mapping):
+            return RowAdapter(row)
+        if hasattr(row, "keys"):
+            return RowAdapter({key: row[key] for key in row.keys()})
+        if self.columns:
+            return RowAdapter(dict(zip(self.columns, row)))
+        return RowAdapter({})
+
+    def fetchone(self) -> Optional[RowAdapter]:
+        return self._wrap(self.cursor.fetchone())
+
+    def fetchall(self) -> list[RowAdapter]:
+        return [self._wrap(row) for row in self.cursor.fetchall() if row is not None]
+
+    def __iter__(self) -> Iterator[RowAdapter]:
+        for row in self.cursor:
+            wrapped = self._wrap(row)
+            if wrapped is not None:
+                yield wrapped
+
+
+class DatabaseConnection:
+    def __init__(self, backend: str, raw_connection: Any) -> None:
+        self.backend = backend
+        self.raw_connection = raw_connection
+
+    def _convert_sql(self, sql: str) -> str:
+        if self.backend == "postgres":
+            return sql.replace("?", "%s")
+        return sql
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> CursorResult:
+        sql = self._convert_sql(sql)
+        if self.backend == "postgres":
+            cursor = self.raw_connection.cursor(row_factory=dict_row)
+            cursor.execute(sql, params)
+            return CursorResult(cursor)
+        cursor = self.raw_connection.execute(sql, params)
+        return CursorResult(cursor)
+
+    def executescript(self, sql_script: str) -> None:
+        if self.backend == "postgres":
+            cursor = self.raw_connection.cursor()
+            for statement in sql_script.split(";"):
+                statement = statement.strip()
+                if statement:
+                    cursor.execute(statement)
+            cursor.close()
+            return
+        self.raw_connection.executescript(sql_script)
+
+    def commit(self) -> None:
+        self.raw_connection.commit()
+
+    def rollback(self) -> None:
+        self.raw_connection.rollback()
+
+    def close(self) -> None:
+        self.raw_connection.close()
+
+    def __enter__(self) -> "DatabaseConnection":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if exc_type is not None:
+            try:
+                self.rollback()
+            finally:
+                self.close()
+            return
+        try:
+            self.commit()
+        finally:
+            self.close()
+
+
 class ControlPlaneService:
     UNLIMITED_FPTN_BANDWIDTH_MBPS = 2047
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database_backend = (
+            "postgres" if self.settings.database_url.startswith(("postgres://", "postgresql://")) else "sqlite"
+        )
+        if self.database_backend == "sqlite":
+            self.settings.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.settings.fptn_config_dir.mkdir(parents=True, exist_ok=True)
 
-    def connect(self) -> sqlite3.Connection:
+    def connect(self) -> DatabaseConnection:
+        if self.database_backend == "postgres":
+            if psycopg is None:
+                raise RuntimeError(
+                    "PostgreSQL support requires psycopg. Install dependencies from requirements.txt."
+                )
+            connection = psycopg.connect(self.settings.database_url, row_factory=dict_row)
+            return DatabaseConnection("postgres", connection)
+
         connection = sqlite3.connect(self.settings.database_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        return DatabaseConnection("sqlite", connection)
 
     def initialize(self) -> None:
         with self.connect() as conn:
@@ -121,7 +247,7 @@ class ControlPlaneService:
             self._enforce_subscription_state(conn)
         self.sync_fptn()
 
-    def _create_schema(self, conn: sqlite3.Connection) -> None:
+    def _create_schema(self, conn: DatabaseConnection) -> None:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS meta (
@@ -219,13 +345,24 @@ class ControlPlaneService:
         )
         conn.commit()
 
-    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
-        node_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()
-        }
-        user_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()
-        }
+    def _table_columns(self, conn: DatabaseConnection, table_name: str) -> set[str]:
+        if conn.backend == "postgres":
+            rows = conn.execute(
+                """
+                SELECT column_name AS name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                """,
+                (table_name,),
+            ).fetchall()
+            return {row["name"] for row in rows}
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {row["name"] for row in rows}
+
+    def _migrate_schema(self, conn: DatabaseConnection) -> None:
+        node_columns = self._table_columns(conn, "nodes")
+        user_columns = self._table_columns(conn, "users")
         migrations = {
             "agent_id": "ALTER TABLE nodes ADD COLUMN agent_id TEXT",
             "source": "ALTER TABLE nodes ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'",
@@ -277,7 +414,7 @@ class ControlPlaneService:
         )
         conn.commit()
 
-    def _seed_demo(self, conn: sqlite3.Connection) -> None:
+    def _seed_demo(self, conn: DatabaseConnection) -> None:
         count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if count:
             return
@@ -520,19 +657,26 @@ class ControlPlaneService:
                 ),
             )
 
-        conn.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-            ("last_sync_at", to_iso(now)),
-        )
+        self._set_meta(conn, "last_sync_at", to_iso(now))
         conn.commit()
 
-    def _set_meta(self, conn: sqlite3.Connection, key: str, value: str) -> None:
+    def _set_meta(self, conn: DatabaseConnection, key: str, value: str) -> None:
+        if conn.backend == "postgres":
+            conn.execute(
+                """
+                INSERT INTO meta (key, value)
+                VALUES (?, ?)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """,
+                (key, value),
+            )
+            return
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
             (key, value),
         )
 
-    def _get_meta(self, conn: sqlite3.Connection) -> dict[str, str]:
+    def _get_meta(self, conn: DatabaseConnection) -> dict[str, str]:
         rows = conn.execute("SELECT key, value FROM meta").fetchall()
         return {row["key"]: row["value"] for row in rows}
 
@@ -590,13 +734,13 @@ class ControlPlaneService:
 
     def _resolve_user_row(
         self,
-        conn: sqlite3.Connection,
+        conn: DatabaseConnection,
         *,
         user_id: Optional[str] = None,
         username: Optional[str] = None,
         billing_subscription_id: Optional[str] = None,
         billing_customer_id: Optional[str] = None,
-    ) -> sqlite3.Row:
+    ) -> RowAdapter:
         if user_id:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             if row:
@@ -632,8 +776,8 @@ class ControlPlaneService:
 
     def _serialize_api_user(
         self,
-        conn: sqlite3.Connection,
-        row: sqlite3.Row,
+        conn: DatabaseConnection,
+        row: RowAdapter,
     ) -> dict[str, Any]:
         user = dict(row)
         speed_policy = self._speed_policy(self._get_meta(conn))
@@ -723,7 +867,7 @@ class ControlPlaneService:
             conn.commit()
         self.sync_fptn()
 
-    def _enforce_subscription_state(self, conn: sqlite3.Connection) -> None:
+    def _enforce_subscription_state(self, conn: DatabaseConnection) -> None:
         now = to_iso(utcnow())
         expired_users = conn.execute(
             """
@@ -1217,7 +1361,7 @@ class ControlPlaneService:
             "speed_policy": speed_policy,
         }
 
-    def _current_nodes(self, conn: sqlite3.Connection) -> tuple[list[dict], list[dict], list[dict]]:
+    def _current_nodes(self, conn: DatabaseConnection) -> tuple[list[dict], list[dict], list[dict]]:
         rows = [dict(row) for row in conn.execute("SELECT * FROM nodes")]
         public_nodes = [
             row for row in rows if row["tier"] == "public" and row["status"] != "offline"
@@ -1232,7 +1376,7 @@ class ControlPlaneService:
 
     def _upsert_access_key(
         self,
-        conn: sqlite3.Connection,
+        conn: DatabaseConnection,
         user_id: str,
         username: str,
         password_plain: str,
@@ -1286,7 +1430,7 @@ class ControlPlaneService:
                 ),
             )
 
-    def _refresh_all_access_keys(self, conn: sqlite3.Connection) -> None:
+    def _refresh_all_access_keys(self, conn: DatabaseConnection) -> None:
         users = conn.execute(
             "SELECT id, username, password_plain, is_premium FROM users"
         ).fetchall()

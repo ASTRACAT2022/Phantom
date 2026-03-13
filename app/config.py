@@ -9,6 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 @dataclass(frozen=True)
 class Settings:
     app_name: str
+    database_url: str
     database_path: Path
     fptn_config_dir: Path
     service_name: str
@@ -22,6 +23,7 @@ class Settings:
 def load_settings() -> Settings:
     return Settings(
         app_name=os.getenv("APP_NAME", "Phantom Control Plane"),
+        database_url=os.getenv("DATABASE_URL", "").strip(),
         database_path=Path(
             os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "panel.db"))
         ),

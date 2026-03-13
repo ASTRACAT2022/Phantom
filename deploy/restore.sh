@@ -47,6 +47,7 @@ load_env() {
     source "${ENV_FILE}"
   fi
 
+  DATABASE_URL="${DATABASE_URL:-}"
   DATABASE_PATH="${DATABASE_PATH:-/var/lib/phantom-control-plane/panel.db}"
   FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/var/lib/phantom-control-plane/fptn-config}"
 }
@@ -101,11 +102,6 @@ main() {
   TMP_DIR="$(mktemp -d)"
   tar -xzf "${ARCHIVE_PATH}" -C "${TMP_DIR}"
 
-  if [[ ! -f "${TMP_DIR}/data/panel.db" ]]; then
-    echo "Invalid backup archive: missing data/panel.db" >&2
-    exit 1
-  fi
-
   if [[ ! -d "${TMP_DIR}/config" ]]; then
     echo "Invalid backup archive: missing config/" >&2
     exit 1
@@ -116,7 +112,22 @@ main() {
   fi
 
   install -d "$(dirname "${DATABASE_PATH}")" "${FPTN_CONFIG_DIR}"
-  install -m 600 "${TMP_DIR}/data/panel.db" "${DATABASE_PATH}"
+  if [[ -f "${TMP_DIR}/data/panel.db" ]]; then
+    install -m 600 "${TMP_DIR}/data/panel.db" "${DATABASE_PATH}"
+  elif [[ -f "${TMP_DIR}/data/panel.dump" ]]; then
+    if [[ "${DATABASE_URL}" != postgres://* && "${DATABASE_URL}" != postgresql://* ]]; then
+      echo "Backup contains PostgreSQL dump, but DATABASE_URL is not configured." >&2
+      exit 1
+    fi
+    if ! command -v pg_restore >/dev/null 2>&1; then
+      echo "pg_restore is required to restore PostgreSQL backups." >&2
+      exit 1
+    fi
+    pg_restore --clean --if-exists --no-owner --no-privileges -d "${DATABASE_URL}" "${TMP_DIR}/data/panel.dump"
+  else
+    echo "Invalid backup archive: missing data/panel.db or data/panel.dump" >&2
+    exit 1
+  fi
   rm -rf "${FPTN_CONFIG_DIR}"
   install -d "${FPTN_CONFIG_DIR}"
   cp -R "${TMP_DIR}/config/." "${FPTN_CONFIG_DIR}/"

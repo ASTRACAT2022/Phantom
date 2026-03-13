@@ -36,6 +36,7 @@ uvicorn app.main:app --reload
 
 ```bash
 APP_NAME="Phantom Control Plane"
+DATABASE_URL=""
 DATABASE_PATH="./data/panel.db"
 FPTN_CONFIG_DIR="./fptn-config"
 FPTN_SERVICE_NAME="PHANTOM.NET"
@@ -47,6 +48,14 @@ PANEL_TIMEZONE="Europe/Moscow"
 PANEL_HOST="0.0.0.0"
 PANEL_PORT="8000"
 ```
+
+Для production теперь рекомендуется `PostgreSQL`:
+
+```bash
+DATABASE_URL="postgresql://phantom:strongpass@127.0.0.1:5432/phantom"
+```
+
+Если `DATABASE_URL` не задан, панель продолжит работать на `SQLite`.
 
 ## Что появится в `FPTN_CONFIG_DIR`
 
@@ -115,6 +124,14 @@ cd /Users/astracat/Documents/Phantom
 sudo bash easy-deploy.sh --port 8080
 ```
 
+Если нужен production сразу на `PostgreSQL`:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash easy-deploy.sh \
+  --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom
+```
+
 Этот скрипт сам вызывает production deploy, подсказывает адрес панели и показывает, где смотреть сервис.
 
 На Linux-сервере:
@@ -122,6 +139,7 @@ sudo bash easy-deploy.sh --port 8080
 ```bash
 cd /Users/astracat/Documents/Phantom
 sudo bash deploy/panel-auto-deploy.sh \
+  --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom \
   --panel-host 0.0.0.0 \
   --panel-port 8000 \
   --node-token phantom-node-shared-token \
@@ -136,6 +154,8 @@ sudo bash deploy/panel-auto-deploy.sh \
 - ставит `systemd` unit;
 - включает автозапуск и поднимает сервис;
 - выводит URL панели и токены для node-controller и billing API.
+
+Если указан `DATABASE_URL`, панель будет использовать `PostgreSQL`. Если нет, будет использоваться `SQLite`.
 
 Для совсем простого запуска используй [easy-deploy.sh](/Users/astracat/Documents/Phantom/easy-deploy.sh), а если нужен полный контроль над путями и env, используй [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh).
 
@@ -175,6 +195,8 @@ sudo bash /opt/phantom-control-plane/deploy/restore.sh \
 systemctl status phantom-backup.timer
 systemctl list-timers | grep phantom-backup
 ```
+
+Если панель работает через `PostgreSQL`, backup использует `pg_dump`, а restore использует `pg_restore`.
 
 ## Billing API
 

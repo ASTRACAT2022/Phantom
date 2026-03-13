@@ -12,6 +12,7 @@ BILLING_TOKEN=""
 METRICS_URL=""
 TIMEZONE="Europe/Moscow"
 SEED_DEMO="false"
+DATABASE_URL=""
 
 usage() {
   cat <<'EOF'
@@ -27,6 +28,7 @@ Options:
   --node-token TOKEN
   --billing-token TOKEN
   --metrics-url URL
+  --database-url URL
   --timezone TZ
   --seed-demo true|false
   --help
@@ -81,6 +83,10 @@ parse_args() {
         ;;
       --metrics-url)
         METRICS_URL="$2"
+        shift 2
+        ;;
+      --database-url)
+        DATABASE_URL="$2"
         shift 2
         ;;
       --timezone)
@@ -144,6 +150,9 @@ main() {
   fi
   if [[ -n "${METRICS_URL}" ]]; then
     CMD+=(--metrics-url "${METRICS_URL}")
+  fi
+  if [[ -n "${DATABASE_URL}" ]]; then
+    CMD+=(--database-url "${DATABASE_URL}")
   fi
 
   "${CMD[@]}"

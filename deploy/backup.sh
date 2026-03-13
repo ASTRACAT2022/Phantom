@@ -33,6 +33,7 @@ load_env() {
   fi
 
   APP_NAME="${APP_NAME:-Phantom Control Plane}"
+  DATABASE_URL="${DATABASE_URL:-}"
   DATABASE_PATH="${DATABASE_PATH:-/var/lib/phantom-control-plane/panel.db}"
   FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/var/lib/phantom-control-plane/fptn-config}"
   PANEL_HOST="${PANEL_HOST:-0.0.0.0}"
@@ -69,11 +70,6 @@ main() {
 
   load_env
 
-  if [[ ! -f "${DATABASE_PATH}" ]]; then
-    echo "Database not found: ${DATABASE_PATH}" >&2
-    exit 1
-  fi
-
   if [[ ! -d "${FPTN_CONFIG_DIR}" ]]; then
     echo "FPTN config dir not found: ${FPTN_CONFIG_DIR}" >&2
     exit 1
@@ -88,7 +84,16 @@ main() {
   archive_path="${BACKUP_DIR}/${archive_name}"
 
   install -d "${TMP_DIR}/data" "${TMP_DIR}/config"
-  backup_sqlite "${DATABASE_PATH}" "${TMP_DIR}/data/panel.db"
+  if [[ "${DATABASE_URL}" == postgres://* || "${DATABASE_URL}" == postgresql://* ]]; then
+    ensure_command pg_dump
+    pg_dump "${DATABASE_URL}" -Fc -f "${TMP_DIR}/data/panel.dump"
+  else
+    if [[ ! -f "${DATABASE_PATH}" ]]; then
+      echo "Database not found: ${DATABASE_PATH}" >&2
+      exit 1
+    fi
+    backup_sqlite "${DATABASE_PATH}" "${TMP_DIR}/data/panel.db"
+  fi
   cp -R "${FPTN_CONFIG_DIR}/." "${TMP_DIR}/config/"
 
   if [[ -f "${ENV_FILE}" ]]; then
@@ -101,6 +106,7 @@ created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 panel_host=${PANEL_HOST}
 panel_port=${PANEL_PORT}
 database_path=${DATABASE_PATH}
+database_url=${DATABASE_URL}
 fptn_config_dir=${FPTN_CONFIG_DIR}
 backup_dir=${BACKUP_DIR}
 EOF

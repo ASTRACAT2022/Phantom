@@ -84,6 +84,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 ```bash
 APP_NAME="Phantom Control Plane"
+DATABASE_URL=""
 DATABASE_PATH="./data/panel.db"
 FPTN_CONFIG_DIR="./fptn-config"
 FPTN_SERVICE_NAME="PHANTOM.NET"
@@ -98,11 +99,23 @@ PANEL_PORT="8000"
 
 Что важно:
 
+- `DATABASE_URL` - production-подключение к `PostgreSQL`;
 - `DATABASE_PATH` - SQLite база панели;
 - `FPTN_CONFIG_DIR` - куда панель пишет конфиги для `FPTN`;
 - `NODE_CONTROLLER_SHARED_TOKEN` - токен для heartbeat от нод;
 - `BILLING_API_TOKEN` - токен для внешнего биллинга;
 - `PHANTOM_SEED_DEMO=false` обязательно для production.
+
+Рекомендуемый production вариант:
+
+```bash
+DATABASE_URL="postgresql://phantom:strongpass@127.0.0.1:5432/phantom"
+```
+
+Логика выбора БД:
+
+- если `DATABASE_URL` задан и начинается с `postgresql://` или `postgres://`, используется `PostgreSQL`;
+- если `DATABASE_URL` пустой, используется `SQLite`.
 
 ## 8. Что пишет панель в FPTN
 
@@ -175,6 +188,13 @@ sudo bash easy-deploy.sh \
   --billing-token my-billing-token
 ```
 
+Если нужен production сразу на `PostgreSQL`:
+
+```bash
+sudo bash easy-deploy.sh \
+  --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom
+```
+
 Скрипт:
 
 - вызывает production deploy панели;
@@ -190,6 +210,7 @@ sudo bash easy-deploy.sh \
 ```bash
 cd /Users/astracat/Documents/Phantom
 sudo bash deploy/panel-auto-deploy.sh \
+  --database-url postgresql://phantom:strongpass@127.0.0.1:5432/phantom \
   --panel-host 0.0.0.0 \
   --panel-port 8000 \
   --node-token my-node-token \
@@ -398,7 +419,7 @@ API возвращает в нормализованном виде:
 
 Что попадает в backup:
 
-- файл SQLite базы;
+- `SQLite` база или `PostgreSQL dump`;
 - каталог `FPTN_CONFIG_DIR`;
 - `/etc/phantom-control-plane.env`
 
@@ -413,6 +434,12 @@ API возвращает в нормализованном виде:
 ```bash
 sudo bash /opt/phantom-control-plane/deploy/backup.sh
 ```
+
+Поведение по типу БД:
+
+- для `SQLite` используется safe-copy через SQLite backup API;
+- для `PostgreSQL` используется `pg_dump`;
+- для restore `PostgreSQL` используется `pg_restore`.
 
 Автоматический backup:
 

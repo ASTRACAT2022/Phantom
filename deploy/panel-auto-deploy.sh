@@ -14,6 +14,7 @@ BACKUP_SERVICE_FILE="/etc/systemd/system/phantom-backup.service"
 BACKUP_TIMER_FILE="/etc/systemd/system/phantom-backup.timer"
 
 APP_NAME="Phantom Control Plane"
+DATABASE_URL=""
 PANEL_HOST="0.0.0.0"
 PANEL_PORT="8000"
 DATABASE_PATH="${STATE_DIR}/panel.db"
@@ -37,6 +38,7 @@ Options:
   --panel-host HOST
   --panel-port PORT
   --app-name NAME
+  --database-url URL
   --database-path PATH
   --fptn-config-dir PATH
   --fptn-service-name NAME
@@ -90,6 +92,10 @@ parse_args() {
         ;;
       --app-name)
         APP_NAME="$2"
+        shift 2
+        ;;
+      --database-url)
+        DATABASE_URL="$2"
         shift 2
         ;;
       --database-path)
@@ -212,6 +218,7 @@ write_env_file() {
   fi
 
   set_env_var "APP_NAME" "${APP_NAME}"
+  set_env_var "DATABASE_URL" "${DATABASE_URL}"
   set_env_var "DATABASE_PATH" "${DATABASE_PATH}"
   set_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
   set_env_var "FPTN_SERVICE_NAME" "${FPTN_SERVICE_NAME}"
