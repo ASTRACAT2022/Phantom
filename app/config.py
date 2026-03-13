@@ -37,13 +37,18 @@ def _detect_local_fptn_metrics_url() -> str:
     return candidates[0] if candidates else ""
 
 
-def detect_local_fptn_metrics_urls() -> list[str]:
+def _read_local_fptn_compose_body() -> str:
     if not LOCAL_FPTN_COMPOSE_PATH.exists():
-        return []
-
+        return ""
     try:
-        compose_body = LOCAL_FPTN_COMPOSE_PATH.read_text(encoding="utf-8")
+        return LOCAL_FPTN_COMPOSE_PATH.read_text(encoding="utf-8")
     except OSError:
+        return ""
+
+
+def detect_local_fptn_metrics_urls() -> list[str]:
+    compose_body = _read_local_fptn_compose_body()
+    if not compose_body:
         return []
 
     port_match = re.search(r'^\s*-\s*"(?P<port>\d+):443/tcp"\s*$', compose_body, re.MULTILINE)
@@ -79,6 +84,21 @@ def detect_local_fptn_metrics_urls() -> list[str]:
         seen.add(candidate)
         deduped.append(candidate)
     return deduped
+
+
+def detect_local_fptn_proxy_domain() -> str:
+    compose_body = _read_local_fptn_compose_body()
+    if not compose_body:
+        return ""
+
+    proxy_match = re.search(
+        r'^\s*DEFAULT_PROXY_DOMAIN:\s*"(?P<domain>[^"]+)"\s*$',
+        compose_body,
+        re.MULTILINE,
+    )
+    if not proxy_match:
+        return ""
+    return proxy_match.group("domain").strip()
 
 
 def load_settings() -> Settings:

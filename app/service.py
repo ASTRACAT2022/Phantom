@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import random
 import re
+import socket
 import ssl
 import sqlite3
 import uuid
+from http.client import HTTPSConnection
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -14,7 +16,7 @@ from urllib.parse import urlsplit
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from .config import Settings, detect_local_fptn_metrics_urls
+from .config import Settings, detect_local_fptn_metrics_urls, detect_local_fptn_proxy_domain
 from .fptn import (
     build_access_link,
     build_access_token,
@@ -218,6 +220,64 @@ class DatabaseConnection:
             self.commit()
         finally:
             self.close()
+
+
+class SNIHTTPSConnection(HTTPSConnection):
+    def __init__(
+        self,
+        host: str,
+        port: Optional[int] = None,
+        *,
+        server_hostname: Optional[str] = None,
+        timeout: Optional[float] = None,
+        context: Optional[ssl.SSLContext] = None,
+    ) -> None:
+        super().__init__(host, port=port, timeout=timeout, context=context)
+        self._server_hostname_override = server_hostname
+
+    def connect(self) -> None:  # pragma: no cover - thin stdlib wrapper
+        sock = socket.create_connection((self.host, self.port), self.timeout, self.source_address)
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+        self.sock = self._context.wrap_socket(
+            sock,
+            server_hostname=self._server_hostname_override or self.host,
+        )
+
+
+def _fetch_text_response(
+    url: str,
+    *,
+    timeout: float,
+    insecure_tls: bool,
+    server_name_override: str = "",
+) -> str:
+    parsed_url = urlsplit(url)
+    if parsed_url.scheme != "https" or not server_name_override:
+        request_kwargs: dict[str, Any] = {"timeout": timeout}
+        if parsed_url.scheme == "https" and insecure_tls:
+            request_kwargs["context"] = ssl._create_unverified_context()
+        with urlopen(url, **request_kwargs) as response:
+            return response.read().decode("utf-8")
+
+    context = ssl._create_unverified_context() if insecure_tls else ssl.create_default_context()
+    connection = SNIHTTPSConnection(
+        parsed_url.hostname or "",
+        port=parsed_url.port or 443,
+        timeout=timeout,
+        context=context,
+        server_hostname=server_name_override,
+    )
+    path = parsed_url.path or "/"
+    if parsed_url.query:
+        path = f"{path}?{parsed_url.query}"
+    connection.request("GET", path, headers={"Host": server_name_override})
+    response = connection.getresponse()
+    body = response.read().decode("utf-8")
+    if response.status >= 400:
+        raise URLError(f"{response.status} {response.reason}")
+    return body
 
 
 class ControlPlaneService:
@@ -920,19 +980,26 @@ class ControlPlaneService:
         selected_url = ""
         last_error = "Metrics unavailable."
         local_candidates = set(detect_local_fptn_metrics_urls())
+        local_proxy_domain = detect_local_fptn_proxy_domain()
         for candidate_url in candidate_urls:
             try:
-                request_kwargs: dict[str, Any] = {"timeout": 3}
                 parsed_url = urlsplit(candidate_url)
-                if parsed_url.scheme == "https" and (
+                use_insecure_tls = parsed_url.scheme == "https" and (
                     self.settings.metrics_insecure_tls
                     or _is_local_hostname(parsed_url.hostname or "")
                     or candidate_url in local_candidates
-                ):
-                    request_kwargs["context"] = ssl._create_unverified_context()
-
-                with urlopen(candidate_url, **request_kwargs) as response:
-                    candidate_body = response.read().decode("utf-8")
+                )
+                server_name_override = (
+                    local_proxy_domain
+                    if local_proxy_domain and candidate_url in local_candidates
+                    else ""
+                )
+                candidate_body = _fetch_text_response(
+                    candidate_url,
+                    timeout=3,
+                    insecure_tls=use_insecure_tls,
+                    server_name_override=server_name_override,
+                )
             except URLError as exc:
                 last_error = f"Metrics unavailable: {exc.reason}"
                 continue
