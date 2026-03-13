@@ -1,0 +1,8 @@
+[Unit]
+Description=Phantom Control Plane Backup
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/phantom-control-plane/deploy/backup.sh
+User=root

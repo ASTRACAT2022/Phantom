@@ -148,6 +148,34 @@ journalctl -u phantom-control-plane.service -f
 
 Шаблон env-файла лежит в [deploy/panel.env.example](/Users/astracat/Documents/Phantom/deploy/panel.env.example), unit-файл в [deploy/phantom-control-plane.service](/Users/astracat/Documents/Phantom/deploy/phantom-control-plane.service), а сам one-shot скрипт в [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh).
 
+## Backups
+
+Теперь в production deploy входит система бэкапов:
+
+- ручной backup: [deploy/backup.sh](/Users/astracat/Documents/Phantom/deploy/backup.sh)
+- restore: [deploy/restore.sh](/Users/astracat/Documents/Phantom/deploy/restore.sh)
+- daily timer: [deploy/phantom-backup.timer](/Users/astracat/Documents/Phantom/deploy/phantom-backup.timer)
+
+Сделать backup вручную:
+
+```bash
+sudo bash /opt/phantom-control-plane/deploy/backup.sh
+```
+
+Восстановить backup:
+
+```bash
+sudo bash /opt/phantom-control-plane/deploy/restore.sh \
+  --archive /var/backups/phantom-control-plane/phantom-backup-YYYYMMDD-HHMMSS.tar.gz
+```
+
+Проверить автозапуск:
+
+```bash
+systemctl status phantom-backup.timer
+systemctl list-timers | grep phantom-backup
+```
+
 ## Billing API
 
 Для интеграции с биллингом панель теперь умеет отдельный JSON API с bearer-токеном `BILLING_API_TOKEN`. Документация также доступна через FastAPI Swagger:

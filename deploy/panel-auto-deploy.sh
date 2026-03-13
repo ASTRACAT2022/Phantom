@@ -10,6 +10,8 @@ SERVICE_USER="phantom"
 STATE_DIR="/var/lib/phantom-control-plane"
 ENV_FILE="/etc/phantom-control-plane.env"
 SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
+BACKUP_SERVICE_FILE="/etc/systemd/system/phantom-backup.service"
+BACKUP_TIMER_FILE="/etc/systemd/system/phantom-backup.timer"
 
 APP_NAME="Phantom Control Plane"
 PANEL_HOST="0.0.0.0"
@@ -22,6 +24,9 @@ NODE_CONTROLLER_SHARED_TOKEN=""
 BILLING_API_TOKEN=""
 PHANTOM_SEED_DEMO="false"
 PANEL_TIMEZONE="Europe/Moscow"
+PHANTOM_BACKUP_DIR="/var/backups/phantom-control-plane"
+PHANTOM_BACKUP_RETENTION_DAYS="14"
+ENABLE_BACKUP_TIMER="true"
 
 usage() {
   cat <<'EOF'
@@ -40,6 +45,9 @@ Options:
   --billing-token TOKEN
   --seed-demo true|false
   --timezone TZ
+  --backup-dir PATH
+  --backup-retention-days DAYS
+  --disable-backup-timer
   --help
 EOF
 }
@@ -116,6 +124,18 @@ parse_args() {
         PANEL_TIMEZONE="$2"
         shift 2
         ;;
+      --backup-dir)
+        PHANTOM_BACKUP_DIR="$2"
+        shift 2
+        ;;
+      --backup-retention-days)
+        PHANTOM_BACKUP_RETENTION_DAYS="$2"
+        shift 2
+        ;;
+      --disable-backup-timer)
+        ENABLE_BACKUP_TIMER="false"
+        shift
+        ;;
       --help|-h)
         usage
         exit 0
@@ -139,6 +159,7 @@ install_project_files() {
   install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${APP_DIR}"
   install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${STATE_DIR}"
   install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${FPTN_CONFIG_DIR}"
+  install -d "${PHANTOM_BACKUP_DIR}"
 
   rm -rf \
     "${APP_DIR}/app" \
@@ -154,6 +175,7 @@ install_project_files() {
   cp -R "${PROJECT_ROOT}/deploy" "${APP_DIR}/deploy"
   install -m 0644 "${PROJECT_ROOT}/requirements.txt" "${APP_DIR}/requirements.txt"
   install -m 0644 "${PROJECT_ROOT}/README.md" "${APP_DIR}/README.md"
+  install -m 0644 "${PROJECT_ROOT}/MANUAL.md" "${APP_DIR}/MANUAL.md"
 
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "${APP_DIR}" "${STATE_DIR}"
 }
@@ -200,13 +222,21 @@ write_env_file() {
   set_env_var "PANEL_TIMEZONE" "${PANEL_TIMEZONE}"
   set_env_var "PANEL_HOST" "${PANEL_HOST}"
   set_env_var "PANEL_PORT" "${PANEL_PORT}"
+  set_env_var "PHANTOM_BACKUP_DIR" "${PHANTOM_BACKUP_DIR}"
+  set_env_var "PHANTOM_BACKUP_RETENTION_DAYS" "${PHANTOM_BACKUP_RETENTION_DAYS}"
 }
 
 install_systemd_unit() {
   install -m 0644 "${PROJECT_ROOT}/deploy/phantom-control-plane.service" "${SYSTEMD_UNIT}"
+  install -m 0644 "${PROJECT_ROOT}/deploy/phantom-backup.service" "${BACKUP_SERVICE_FILE}"
+  install -m 0644 "${PROJECT_ROOT}/deploy/phantom-backup.timer" "${BACKUP_TIMER_FILE}"
   systemctl daemon-reload
   systemctl enable "${SERVICE_NAME}.service"
   systemctl restart "${SERVICE_NAME}.service"
+  if [[ "${ENABLE_BACKUP_TIMER}" == "true" ]]; then
+    systemctl enable phantom-backup.timer
+    systemctl restart phantom-backup.timer
+  fi
 }
 
 print_summary() {
@@ -217,6 +247,7 @@ Phantom Control Plane deployed.
 Service:
   systemctl status ${SERVICE_NAME}.service
   journalctl -u ${SERVICE_NAME}.service -f
+  systemctl status phantom-backup.timer
 
 Panel:
   http://${PANEL_HOST}:${PANEL_PORT}
@@ -228,6 +259,12 @@ Env file:
 Tokens:
   NODE_CONTROLLER_SHARED_TOKEN=${NODE_CONTROLLER_SHARED_TOKEN}
   BILLING_API_TOKEN=${BILLING_API_TOKEN}
+
+Backups:
+  dir=${PHANTOM_BACKUP_DIR}
+  retention_days=${PHANTOM_BACKUP_RETENTION_DAYS}
+  run_now=sudo bash /opt/phantom-control-plane/deploy/backup.sh
+  restore=sudo bash /opt/phantom-control-plane/deploy/restore.sh --archive ${PHANTOM_BACKUP_DIR}/phantom-backup-YYYYMMDD-HHMMSS.tar.gz
 
 EOF
 }

@@ -387,18 +387,66 @@ API возвращает в нормализованном виде:
 
 ## 20. Резервное копирование
 
-Что сохранять:
+В production теперь есть встроенная backup-система.
+
+Файлы:
+
+- [deploy/backup.sh](/Users/astracat/Documents/Phantom/deploy/backup.sh)
+- [deploy/restore.sh](/Users/astracat/Documents/Phantom/deploy/restore.sh)
+- [deploy/phantom-backup.service](/Users/astracat/Documents/Phantom/deploy/phantom-backup.service)
+- [deploy/phantom-backup.timer](/Users/astracat/Documents/Phantom/deploy/phantom-backup.timer)
+
+Что попадает в backup:
 
 - файл SQLite базы;
 - каталог `FPTN_CONFIG_DIR`;
 - `/etc/phantom-control-plane.env`
 
-Пример:
+Каталог backup по умолчанию:
 
 ```bash
-cp /var/lib/phantom-control-plane/panel.db /root/backups/panel-$(date +%F).db
-cp -R /var/lib/phantom-control-plane/fptn-config /root/backups/fptn-config-$(date +%F)
-cp /etc/phantom-control-plane.env /root/backups/phantom-control-plane.env.$(date +%F)
+/var/backups/phantom-control-plane
+```
+
+Ручной backup:
+
+```bash
+sudo bash /opt/phantom-control-plane/deploy/backup.sh
+```
+
+Автоматический backup:
+
+- timer `phantom-backup.timer`
+- сервис `phantom-backup.service`
+- расписание по умолчанию: каждый день в `03:30`
+
+Проверить таймер:
+
+```bash
+systemctl status phantom-backup.timer
+systemctl list-timers | grep phantom-backup
+```
+
+Сделать restore:
+
+```bash
+sudo bash /opt/phantom-control-plane/deploy/restore.sh \
+  --archive /var/backups/phantom-control-plane/phantom-backup-YYYYMMDD-HHMMSS.tar.gz
+```
+
+Если нужно восстановить ещё и env:
+
+```bash
+sudo bash /opt/phantom-control-plane/deploy/restore.sh \
+  --archive /var/backups/phantom-control-plane/phantom-backup-YYYYMMDD-HHMMSS.tar.gz \
+  --with-env
+```
+
+Параметры backup в env:
+
+```bash
+PHANTOM_BACKUP_DIR="/var/backups/phantom-control-plane"
+PHANTOM_BACKUP_RETENTION_DAYS="14"
 ```
 
 ## 21. Обновление проекта
