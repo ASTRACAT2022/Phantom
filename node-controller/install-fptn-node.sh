@@ -32,6 +32,8 @@ REPLACE_AGENT_ID="${PHANTOM_REPLACE_AGENT_ID:-}"
 FPTN_ONLY="false"
 SKIP_DOCKER_INSTALL="false"
 TMP_DIR=""
+PANEL_ENV_FILE="/etc/phantom-control-plane.env"
+PANEL_SERVICE_NAME="phantom-control-plane.service"
 
 usage() {
   cat <<EOF
@@ -112,6 +114,50 @@ PY
 
 detect_host_ip() {
   hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+detect_panel_host() {
+  /usr/bin/python3 - "${PANEL_URL}" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+print(urlsplit(sys.argv[1]).hostname or "")
+PY
+}
+
+is_local_panel() {
+  local panel_host="$1"
+  if [[ -z "${panel_host}" ]]; then
+    return 1
+  fi
+  if [[ "${panel_host}" == "127.0.0.1" || "${panel_host}" == "localhost" || "${panel_host}" == "::1" ]]; then
+    return 0
+  fi
+  if hostname -I 2>/dev/null | tr ' ' '\n' | grep -Fxq "${panel_host}"; then
+    return 0
+  fi
+  if [[ "$(hostname -f 2>/dev/null || true)" == "${panel_host}" ]]; then
+    return 0
+  fi
+  if [[ "$(hostname 2>/dev/null || true)" == "${panel_host}" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+quote_env() {
+  printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')"
+}
+
+set_panel_env_var() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" "${PANEL_ENV_FILE}"; then
+    sed -i.bak "s|^${key}=.*|${key}=$(quote_env "${value}")|" "${PANEL_ENV_FILE}"
+    rm -f "${PANEL_ENV_FILE}.bak"
+  else
+    printf '%s=%s\n' "${key}" "$(quote_env "${value}")" >> "${PANEL_ENV_FILE}"
+  fi
 }
 
 install_dependencies() {
@@ -240,6 +286,44 @@ open_firewall() {
     return
   fi
   ufw allow "${NODE_PORT}/tcp"
+}
+
+sync_local_panel_with_fptn() {
+  local panel_host=""
+  panel_host="$(detect_panel_host)"
+  if [[ ! -f "${PANEL_ENV_FILE}" ]]; then
+    return
+  fi
+  if ! is_local_panel "${panel_host}"; then
+    return
+  fi
+  if ! systemctl list-unit-files | grep -q "^${PANEL_SERVICE_NAME}"; then
+    return
+  fi
+  if [[ ! -x "/opt/phantom-control-plane/.venv/bin/python" ]]; then
+    return
+  fi
+
+  set_panel_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
+  systemctl restart "${PANEL_SERVICE_NAME}"
+
+  (
+    set -a
+    # shellcheck disable=SC1090
+    source "${PANEL_ENV_FILE}"
+    set +a
+    cd /opt/phantom-control-plane
+    /opt/phantom-control-plane/.venv/bin/python - <<'PY'
+from app.config import load_settings
+from app.service import ControlPlaneService
+
+settings = load_settings()
+service = ControlPlaneService(settings)
+service.initialize()
+service.sync_fptn()
+print("Panel synced to local FPTN config dir.")
+PY
+  )
 }
 
 install_node_controller() {
@@ -436,6 +520,7 @@ write_compose_file
 ensure_certs
 start_fptn
 open_firewall
+sync_local_panel_with_fptn
 
 if [[ "${FPTN_ONLY}" != "true" ]]; then
   TMP_DIR="$(mktemp -d)"
