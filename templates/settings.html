@@ -64,7 +64,7 @@
         <section class="panel-card">
           <h2 class="panel-title">Speed Policy</h2>
           <p class="panel-subtitle">
-            У `FPTN` нет отдельного unlimited-флага в `users.list`, поэтому режим “вся скорость” экспортируется как высокий безопасный профиль.
+            Глобальная настройка для пользователей с режимом "Full Speed".
           </p>
           <form action="/actions/config/speed-policy" method="post" class="mt-4 space-y-3">
             <label class="field">
@@ -73,16 +73,17 @@
                 class="input"
                 type="number"
                 name="unlimited_profile_mbps"
-                min="1"
-                max="2047"
+                min="0"
                 value="{{ speed_policy.unlimited_profile_mbps }}"
                 required
               />
             </label>
             <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-3 text-xs leading-5 text-slate-600">
-              Это значение уходит в `users.list` для пользователей с режимом <code>Full speed</code>.
-              Ядро `FPTN` не поддерживает настоящий unlimited-флаг, поэтому панель использует высокий лимит вместо нуля.
-              Безопасный максимум здесь <code>2047 Mbps</code>: при <code>2048</code> и выше FPTN уже упирается в предел 32-bit значения.
+              Это значение уходит в <code>users.list</code> для всех пользователей с тарифом Unlimited.
+              <br>
+              Укажите <code>0</code>, чтобы отключить шейпинг полностью (максимальная скорость канала).
+              <br>
+              Если нужно ограничить "безлимитчиков" (например, чтобы не забили весь канал), укажите значение в Mbps (например 1000).
             </div>
             <button class="btn btn-primary" type="submit">Сохранить speed policy</button>
           </form>

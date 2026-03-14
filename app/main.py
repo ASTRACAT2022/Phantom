@@ -49,7 +49,7 @@ class BillingLookupPayload(BaseModel):
 
 class BillingUserUpsertPayload(BaseModel):
     username: str
-    bandwidth_mbps: Optional[int] = Field(default=None, ge=1)
+    bandwidth_mbps: Optional[int] = Field(default=None, ge=0)
     speed_mode: Optional[str] = None
     subscription_days: Optional[int] = Field(default=None, ge=1)
     subscription_expires_at: Optional[str] = None
@@ -71,7 +71,7 @@ class BillingStatusPayload(BillingLookupPayload):
 
 class BillingSpeedPayload(BillingLookupPayload):
     speed_mode: Optional[str] = None
-    bandwidth_mbps: Optional[int] = Field(default=None, ge=1)
+    bandwidth_mbps: Optional[int] = Field(default=None, ge=0)
 
 
 class NodeAgentDeregisterPayload(BaseModel):

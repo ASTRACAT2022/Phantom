@@ -281,7 +281,7 @@ def _fetch_text_response(
 
 
 class ControlPlaneService:
-    UNLIMITED_FPTN_BANDWIDTH_MBPS = 2047
+    UNLIMITED_FPTN_BANDWIDTH_MBPS = 0
     STALE_SESSION_TIMEOUT_MINUTES = 5
     TRAFFIC_SAMPLE_BUCKET_MINUTES = 5
     FPTN_EXPORT_FILES = (
@@ -770,14 +770,22 @@ class ControlPlaneService:
 
     def _speed_policy(self, meta: Optional[dict[str, str]] = None) -> dict[str, Any]:
         source = meta or {}
-        value = int(
-            source.get(
-                "unlimited_profile_mbps",
-                str(self.UNLIMITED_FPTN_BANDWIDTH_MBPS),
-            )
-            or self.UNLIMITED_FPTN_BANDWIDTH_MBPS
-        )
-        value = max(1, min(value, self.UNLIMITED_FPTN_BANDWIDTH_MBPS))
+        # FPTN: 0 means unlimited.
+        # However, older panels used 2047 as "max".
+        # We now default to 0 for true unlimited.
+        stored = source.get("unlimited_profile_mbps")
+        if stored is None:
+            return {"unlimited_profile_mbps": 0}
+        
+        try:
+            value = int(stored)
+        except ValueError:
+            value = 0
+            
+        # If user manually set a limit, respect it.
+        # But if it was the old default (2047), migrate to 0 if desired, 
+        # or keep it as is. For now, let's just return what is stored,
+        # but default to 0 if nothing is stored.
         return {"unlimited_profile_mbps": value}
 
     def _effective_bandwidth_mbps(self, user: dict[str, Any], speed_policy: dict[str, Any]) -> int:
@@ -964,9 +972,9 @@ class ControlPlaneService:
 
     def update_speed_policy(self, unlimited_profile_mbps: int) -> None:
         value = int(unlimited_profile_mbps)
-        if value < 1 or value > self.UNLIMITED_FPTN_BANDWIDTH_MBPS:
+        if value < 0:
             raise ValueError(
-                f"Unlimited profile must be between 1 and {self.UNLIMITED_FPTN_BANDWIDTH_MBPS} Mbps."
+                "Unlimited profile must be 0 (true unlimited) or a positive integer."
             )
         with self.connect() as conn:
             self._set_meta(conn, "unlimited_profile_mbps", str(value))
