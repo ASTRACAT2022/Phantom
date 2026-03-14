@@ -1716,14 +1716,29 @@ class ControlPlaneService:
 
     def _current_nodes(self, conn: DatabaseConnection) -> tuple[list[dict], list[dict], list[dict]]:
         rows = [dict(row) for row in conn.execute("SELECT * FROM nodes")]
+        eligible_rows: list[dict[str, Any]] = []
+        for row in rows:
+            host = str(row.get("host", "") or "").strip()
+            port = int(row.get("port", 0) or 0)
+            if not host or port < 1 or port > 65535:
+                continue
+            if row.get("source") == "agent":
+                if self._derive_node_status(row) != "online":
+                    continue
+                if not str(row.get("md5_fingerprint", "") or "").strip():
+                    continue
+            elif row.get("status") == "offline":
+                continue
+            eligible_rows.append(row)
+
         public_nodes = [
-            row for row in rows if row["tier"] == "public" and row["status"] != "offline"
+            row for row in eligible_rows if row["tier"] == "public"
         ]
         premium_nodes = [
-            row for row in rows if row["tier"] == "premium" and row["status"] != "offline"
+            row for row in eligible_rows if row["tier"] == "premium"
         ]
         censored_nodes = [
-            row for row in rows if row["tier"] == "censored" and row["status"] != "offline"
+            row for row in eligible_rows if row["tier"] == "censored"
         ]
         return public_nodes, premium_nodes, censored_nodes
 
@@ -2386,7 +2401,11 @@ class ControlPlaneService:
                 }
                 for user in active_users
             ]
-            nodes = [dict(row) for row in conn.execute("SELECT * FROM nodes ORDER BY name ASC")]
+            public_nodes, premium_nodes, censored_nodes = self._current_nodes(conn)
+            nodes = sorted(
+                public_nodes + premium_nodes + censored_nodes,
+                key=lambda node: (node["tier"], node["name"]),
+            )
             self._refresh_all_access_keys(conn)
             write_fptn_config(
                 self.settings.fptn_config_dir,
