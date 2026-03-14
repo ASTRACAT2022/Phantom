@@ -578,6 +578,20 @@ async def node_agent_fptn_config(
     return JSONResponse(service.export_fptn_config_bundle())
 
 
+@app.post("/actions/users/bulk-unlimited")
+async def actions_users_bulk_unlimited(request: Request) -> RedirectResponse:
+    verify_admin(request)
+    try:
+        service.set_all_users_unlimited()
+        return flash_redirect(
+            request,
+            "/settings",
+            "Все пользователи успешно переведены на тариф Unlimited (0 Mbps).",
+        )
+    except ValueError as exc:
+        return flash_redirect(request, "/settings", str(exc), level="error")
+
+
 @app.post("/api/node-agent/heartbeat")
 async def node_agent_heartbeat(
     request: Request,

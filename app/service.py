@@ -981,6 +981,21 @@ class ControlPlaneService:
             conn.commit()
         self.sync_fptn()
 
+    def set_all_users_unlimited(self) -> None:
+        """
+        Bulk update: set bandwidth_mbps = 0 and speed_mode = 'unlimited' for ALL users.
+        """
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET bandwidth_mbps = 0, speed_mode = 'unlimited', updated_at = ?
+                """,
+                (to_iso(utcnow()),),
+            )
+            conn.commit()
+        self.sync_fptn()
+
     def _enforce_subscription_state(self, conn: DatabaseConnection) -> None:
         now = to_iso(utcnow())
         expired_users = conn.execute(

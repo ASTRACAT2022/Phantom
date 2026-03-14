@@ -90,6 +90,26 @@
         </section>
 
         <section class="panel-card">
+          <h2 class="panel-title">Массовое управление</h2>
+          <div class="mt-4 space-y-4">
+            <div>
+              <p class="panel-subtitle">
+                Перевести всех пользователей на тариф "Unlimited" (0 Mbps / без лимита).
+              </p>
+              <form action="/actions/users/bulk-unlimited" method="post" class="mt-3">
+                <button 
+                  class="btn btn-warning w-full" 
+                  type="submit"
+                  onclick="return confirm('Вы уверены? Это переключит ВСЕХ пользователей на режим Unlimited (0 Mbps).')"
+                >
+                  Снять ограничения скорости у всех
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-card">
           <h2 class="panel-title">Что видят агенты</h2>
           <div class="mt-4 space-y-3">
             <div class="list-row"><span>Default host</span><strong>{{ node_defaults.host or "agent/local override" }}</strong></div>
