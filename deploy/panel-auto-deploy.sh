@@ -27,6 +27,8 @@ ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
 ADMIN_SESSION_SECRET=""
 SESSION_COOKIE_SECURE="false"
+PANEL_PUBLIC_BASE_URL=""
+FORWARDED_ALLOW_IPS="127.0.0.1"
 NODE_AGENT_GRPC_ENABLED="false"
 NODE_AGENT_GRPC_HOST="0.0.0.0"
 NODE_AGENT_GRPC_PORT="50061"
@@ -55,6 +57,9 @@ Options:
   --admin-username USER
   --admin-password PASS
   --session-cookie-secure true|false
+  --public-base-url URL
+  --forwarded-allow-ips IPS
+  --behind-proxy
   --enable-node-grpc
   --grpc-host HOST
   --grpc-port PORT|random
@@ -239,6 +244,21 @@ parse_args() {
         SESSION_COOKIE_SECURE="$2"
         shift 2
         ;;
+      --public-base-url)
+        PANEL_PUBLIC_BASE_URL="$2"
+        shift 2
+        ;;
+      --forwarded-allow-ips)
+        FORWARDED_ALLOW_IPS="$2"
+        shift 2
+        ;;
+      --behind-proxy)
+        if [[ "${PANEL_HOST}" == "0.0.0.0" ]]; then
+          PANEL_HOST="127.0.0.1"
+        fi
+        SESSION_COOKIE_SECURE="true"
+        shift
+        ;;
       --enable-node-grpc)
         NODE_AGENT_GRPC_ENABLED="true"
         shift
@@ -375,6 +395,8 @@ write_env_file() {
   set_env_var "ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
   set_env_var "ADMIN_SESSION_SECRET" "${ADMIN_SESSION_SECRET}"
   set_env_var "SESSION_COOKIE_SECURE" "${SESSION_COOKIE_SECURE}"
+  set_env_var "PANEL_PUBLIC_BASE_URL" "${PANEL_PUBLIC_BASE_URL}"
+  set_env_var "FORWARDED_ALLOW_IPS" "${FORWARDED_ALLOW_IPS}"
   set_env_var "NODE_AGENT_GRPC_ENABLED" "${NODE_AGENT_GRPC_ENABLED}"
   set_env_var "NODE_AGENT_GRPC_HOST" "${NODE_AGENT_GRPC_HOST}"
   set_env_var "NODE_AGENT_GRPC_PORT" "${NODE_AGENT_GRPC_PORT}"
@@ -413,6 +435,9 @@ Panel:
   http://${PANEL_HOST}:${PANEL_PORT}
   http://${PANEL_HOST}:${PANEL_PORT}/docs
 
+Public base URL:
+  ${PANEL_PUBLIC_BASE_URL:-not-set}
+
 Env file:
   ${ENV_FILE}
 
@@ -432,6 +457,9 @@ Backups:
 
 Metrics:
   url=${FPTN_PROMETHEUS_METRICS_URL}
+
+Proxy:
+  forwarded_allow_ips=${FORWARDED_ALLOW_IPS}
 
 Node gRPC:
   enabled=${NODE_AGENT_GRPC_ENABLED}

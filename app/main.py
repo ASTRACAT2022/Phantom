@@ -207,6 +207,8 @@ def redirect_back(
 
 
 def panel_base_url(request: Request) -> str:
+    if settings.public_base_url:
+        return settings.public_base_url
     return str(request.base_url).rstrip("/")
 
 

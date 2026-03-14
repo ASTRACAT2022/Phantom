@@ -47,6 +47,8 @@ BILLING_API_TOKEN="phantom-billing-token"
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="admin-change-me"
 SESSION_COOKIE_SECURE="false"
+PANEL_PUBLIC_BASE_URL=""
+FORWARDED_ALLOW_IPS="127.0.0.1"
 NODE_AGENT_GRPC_ENABLED="false"
 NODE_AGENT_GRPC_HOST="0.0.0.0"
 NODE_AGENT_GRPC_PORT="50061"
@@ -66,6 +68,7 @@ DATABASE_URL="postgresql://phantom:strongpass@127.0.0.1:5432/phantom"
 
 HTML-панель и `/docs` теперь закрыты admin-auth. После deploy вход выполняется через `/login`.
 Если панель стоит за HTTPS reverse proxy, включи `SESSION_COOKIE_SECURE=true`.
+Для корректных ссылок и node deploy wizard за reverse proxy укажи ещё `PANEL_PUBLIC_BASE_URL`, например `https://panel.example.com`.
 
 Для связи панели и node-controller можно включить отдельный gRPC listener на любом свободном порту, например `51173`:
 
@@ -213,6 +216,40 @@ sudo bash easy-deploy.sh \
 ```bash
 cd /Users/astracat/Documents/Phantom
 sudo bash easy-deploy.sh --enable-node-grpc --grpc-port random
+```
+
+Если панель будет стоять только на localhost за reverse proxy:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash easy-deploy.sh \
+  --behind-proxy \
+  --public-base-url https://panel.example.com
+```
+
+Это автоматически:
+
+- поднимет панель на `127.0.0.1:8000`;
+- включит secure-cookie;
+- включит доверие к `X-Forwarded-*` от `127.0.0.1`;
+- заставит UI и генератор команд использовать внешний URL прокси.
+
+Пример `Nginx`:
+
+```nginx
+server {
+    listen 80;
+    server_name panel.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
 ```
 
 Можно сразу передать admin-логин:

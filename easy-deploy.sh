@@ -16,6 +16,9 @@ DATABASE_URL=""
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
 SESSION_COOKIE_SECURE="false"
+PANEL_PUBLIC_BASE_URL=""
+FORWARDED_ALLOW_IPS="127.0.0.1"
+BEHIND_PROXY="false"
 ENABLE_NODE_GRPC="false"
 NODE_GRPC_HOST="0.0.0.0"
 NODE_GRPC_PORT=""
@@ -36,6 +39,9 @@ Options:
   --admin-username USER
   --admin-password PASS
   --session-cookie-secure true|false
+  --public-base-url URL
+  --forwarded-allow-ips IPS
+  --behind-proxy
   --enable-node-grpc
   --grpc-host HOST
   --grpc-port PORT|random
@@ -105,6 +111,18 @@ parse_args() {
         SESSION_COOKIE_SECURE="$2"
         shift 2
         ;;
+      --public-base-url)
+        PANEL_PUBLIC_BASE_URL="$2"
+        shift 2
+        ;;
+      --forwarded-allow-ips)
+        FORWARDED_ALLOW_IPS="$2"
+        shift 2
+        ;;
+      --behind-proxy)
+        BEHIND_PROXY="true"
+        shift
+        ;;
       --enable-node-grpc)
         ENABLE_NODE_GRPC="true"
         shift
@@ -166,6 +184,10 @@ main() {
   fi
 
   echo "Starting Phantom easy deploy..."
+  if [[ "${BEHIND_PROXY}" == "true" && "${PANEL_HOST}" == "0.0.0.0" ]]; then
+    PANEL_HOST="127.0.0.1"
+    SESSION_COOKIE_SECURE="true"
+  fi
   echo "Panel host: ${PANEL_HOST}"
   echo "Panel port: ${PANEL_PORT}"
   echo "Public IP hint: ${PUBLIC_IP}"
@@ -192,6 +214,15 @@ main() {
   fi
   if [[ -n "${SESSION_COOKIE_SECURE}" ]]; then
     CMD+=(--session-cookie-secure "${SESSION_COOKIE_SECURE}")
+  fi
+  if [[ -n "${PANEL_PUBLIC_BASE_URL}" ]]; then
+    CMD+=(--public-base-url "${PANEL_PUBLIC_BASE_URL}")
+  fi
+  if [[ -n "${FORWARDED_ALLOW_IPS}" ]]; then
+    CMD+=(--forwarded-allow-ips "${FORWARDED_ALLOW_IPS}")
+  fi
+  if [[ "${BEHIND_PROXY}" == "true" ]]; then
+    CMD+=(--behind-proxy)
   fi
   if [[ -n "${METRICS_URL}" ]]; then
     CMD+=(--metrics-url "${METRICS_URL}")

@@ -94,6 +94,8 @@ BILLING_API_TOKEN="phantom-billing-token"
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="admin-change-me"
 SESSION_COOKIE_SECURE="false"
+PANEL_PUBLIC_BASE_URL=""
+FORWARDED_ALLOW_IPS="127.0.0.1"
 PHANTOM_SEED_DEMO="false"
 PANEL_TIMEZONE="Europe/Moscow"
 PANEL_HOST="0.0.0.0"
@@ -110,6 +112,8 @@ PANEL_PORT="8000"
 - `ADMIN_USERNAME` - логин администратора панели;
 - `ADMIN_PASSWORD` - пароль администратора панели;
 - `SESSION_COOKIE_SECURE` - включить secure-cookie при работе за HTTPS;
+- `PANEL_PUBLIC_BASE_URL` - внешний URL панели за reverse proxy, например `https://panel.example.com`;
+- `FORWARDED_ALLOW_IPS` - список trusted proxy IP для `X-Forwarded-*`, по умолчанию `127.0.0.1`;
 - `PHANTOM_SEED_DEMO=false` обязательно для production.
 
 Рекомендуемый production вариант:
@@ -249,6 +253,26 @@ sudo bash deploy/panel-auto-deploy.sh \
 - включает автозапуск сервиса.
 - генерирует admin password, если он не был передан явно.
 
+Если панель будет стоять за reverse proxy и слушать только localhost:
+
+```bash
+cd /Users/astracat/Documents/Phantom
+sudo bash deploy/panel-auto-deploy.sh \
+  --behind-proxy \
+  --public-base-url https://panel.example.com \
+  --panel-port 8000 \
+  --node-token my-node-token \
+  --billing-token my-billing-token
+```
+
+Этот режим автоматически:
+
+- меняет bind на `127.0.0.1`;
+- включает `SESSION_COOKIE_SECURE=true`;
+- включает `uvicorn --proxy-headers`;
+- доверяет `X-Forwarded-*` от `127.0.0.1`;
+- заставляет UI использовать внешний URL прокси вместо локального `127.0.0.1`.
+
 Важные файлы:
 
 - [deploy/panel-auto-deploy.sh](/Users/astracat/Documents/Phantom/deploy/panel-auto-deploy.sh)
@@ -264,6 +288,24 @@ sudo bash deploy/panel-auto-deploy.sh \
 - `http://SERVER_IP:9000`
 
 Для внутренней админки это нормально. Если потом понадобится публичный production с HTTPS, можно поставить reverse proxy перед панелью.
+
+Минимальный `Nginx` пример:
+
+```nginx
+server {
+    listen 80;
+    server_name panel.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
 
 ## 14. Node Controller
 

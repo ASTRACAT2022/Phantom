@@ -25,6 +25,7 @@ class Settings:
     admin_session_secret: str
     session_cookie_name: str
     session_cookie_secure: bool
+    public_base_url: str
     node_agent_grpc_enabled: bool
     node_agent_grpc_host: str
     node_agent_grpc_port: int
@@ -145,6 +146,7 @@ def load_settings() -> Settings:
         admin_session_secret=os.getenv("ADMIN_SESSION_SECRET", secrets.token_urlsafe(32)),
         session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "phantom_admin_session"),
         session_cookie_secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true",
+        public_base_url=os.getenv("PANEL_PUBLIC_BASE_URL", "").strip().rstrip("/"),
         node_agent_grpc_enabled=os.getenv("NODE_AGENT_GRPC_ENABLED", "false").lower() == "true",
         node_agent_grpc_host=os.getenv("NODE_AGENT_GRPC_HOST", "0.0.0.0").strip() or "0.0.0.0",
         node_agent_grpc_port=int(os.getenv("NODE_AGENT_GRPC_PORT", "50061")),
