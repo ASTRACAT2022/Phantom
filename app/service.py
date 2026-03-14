@@ -282,6 +282,8 @@ def _fetch_text_response(
 
 class ControlPlaneService:
     UNLIMITED_FPTN_BANDWIDTH_MBPS = 2047
+    STALE_SESSION_TIMEOUT_MINUTES = 5
+    TRAFFIC_SAMPLE_BUCKET_MINUTES = 5
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -972,6 +974,74 @@ class ControlPlaneService:
             )
         conn.commit()
 
+    def _expire_stale_sessions(self, conn: DatabaseConnection) -> None:
+        threshold = to_iso(utcnow() - timedelta(minutes=self.STALE_SESSION_TIMEOUT_MINUTES))
+        conn.execute(
+            """
+            UPDATE sessions
+            SET status = 'terminated', rx_mbps = 0, tx_mbps = 0
+            WHERE status = 'active' AND last_seen_at < ?
+            """,
+            (threshold,),
+        )
+        conn.commit()
+
+    def _record_traffic_sample(
+        self,
+        ingress_mbps: float,
+        egress_mbps: float,
+        active_users: int,
+    ) -> None:
+        bucket_now = utcnow()
+        bucket_minute = (bucket_now.minute // self.TRAFFIC_SAMPLE_BUCKET_MINUTES) * self.TRAFFIC_SAMPLE_BUCKET_MINUTES
+        bucket = bucket_now.replace(minute=bucket_minute, second=0, microsecond=0)
+
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM traffic_samples WHERE bucket_time = ?",
+                (to_iso(bucket),),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE traffic_samples
+                    SET ingress_mbps = ?, egress_mbps = ?, active_users = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        round(float(ingress_mbps), 2),
+                        round(float(egress_mbps), 2),
+                        int(active_users),
+                        existing["id"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO traffic_samples (
+                        id, bucket_time, ingress_mbps, egress_mbps, active_users
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        to_iso(bucket),
+                        round(float(ingress_mbps), 2),
+                        round(float(egress_mbps), 2),
+                        int(active_users),
+                    ),
+                )
+            conn.execute(
+                """
+                DELETE FROM traffic_samples
+                WHERE id NOT IN (
+                    SELECT id FROM traffic_samples
+                    ORDER BY bucket_time DESC
+                    LIMIT 288
+                )
+                """
+            )
+            conn.commit()
+
     def _load_remote_metrics(self) -> LiveMetrics:
         configured_urls = [self.settings.metrics_url] if self.settings.metrics_url else []
         candidate_urls = configured_urls + [
@@ -1349,18 +1419,13 @@ class ControlPlaneService:
     def dashboard(self) -> dict[str, Any]:
         with self.connect() as conn:
             self._enforce_subscription_state(conn)
+            self._expire_stale_sessions(conn)
             users = [dict(row) for row in conn.execute("SELECT * FROM users ORDER BY updated_at DESC")]
             nodes = [dict(row) for row in conn.execute("SELECT * FROM nodes ORDER BY name ASC")]
             sessions = [
                 dict(row)
                 for row in conn.execute(
                     "SELECT * FROM sessions ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_seen_at DESC"
-                )
-            ]
-            traffic_samples = [
-                dict(row)
-                for row in conn.execute(
-                    "SELECT * FROM traffic_samples ORDER BY bucket_time ASC LIMIT 24"
                 )
             ]
             access_keys = [
@@ -1391,6 +1456,7 @@ class ControlPlaneService:
 
         node_map = {node["id"]: node for node in nodes}
         session_rows: list[dict[str, Any]] = []
+        active_session_rows: list[dict[str, Any]] = []
         for session in sessions:
             stats = user_stats[session["user_id"]]
             stats["ingress_bytes"] += int(session["ingress_bytes"])
@@ -1400,17 +1466,18 @@ class ControlPlaneService:
                 stats["active_ips"].add(session["ip_address"])
                 node_active_users[session["node_id"]].add(session["user_id"])
 
-            session_rows.append(
-                {
-                    **session,
-                    "username": user_identity_map.get(session["user_id"], "unknown"),
-                    "node_name": node_map.get(session["node_id"], {}).get("name", "Unknown"),
-                    "connected_at_human": format_compact_datetime(session["connected_at"]),
-                    "last_seen_human": format_compact_datetime(session["last_seen_at"]),
-                    "ingress_human": human_bytes(session["ingress_bytes"]),
-                    "egress_human": human_bytes(session["egress_bytes"]),
-                }
-            )
+            session_view = {
+                **session,
+                "username": user_identity_map.get(session["user_id"], "unknown"),
+                "node_name": node_map.get(session["node_id"], {}).get("name", "Unknown"),
+                "connected_at_human": format_compact_datetime(session["connected_at"]),
+                "last_seen_human": format_compact_datetime(session["last_seen_at"]),
+                "ingress_human": human_bytes(session["ingress_bytes"]),
+                "egress_human": human_bytes(session["egress_bytes"]),
+            }
+            session_rows.append(session_view)
+            if session["status"] == "active":
+                active_session_rows.append(session_view)
 
         expiring_soon = 0
         user_rows: list[dict[str, Any]] = []
@@ -1474,11 +1541,11 @@ class ControlPlaneService:
                 }
             )
 
-        display_sessions = session_rows
-        if not display_sessions:
-            synthetic_sessions = self._synthetic_live_sessions(live_metrics, node_rows)
-            if synthetic_sessions:
-                display_sessions = synthetic_sessions
+        synthetic_sessions = self._synthetic_live_sessions(live_metrics, node_rows)
+        if live_metrics.connected and synthetic_sessions:
+            display_sessions = synthetic_sessions
+        else:
+            display_sessions = active_session_rows
 
         total_ingress = sum(user["ingress_bytes"] for user in user_rows)
         total_egress = sum(user["egress_bytes"] for user in user_rows)
@@ -1496,6 +1563,24 @@ class ControlPlaneService:
             total_rx = sum(float(node.get("network_rx_mbps", 0) or 0) for node in node_rows)
         if total_tx <= 0:
             total_tx = sum(float(node.get("network_tx_mbps", 0) or 0) for node in node_rows)
+
+        active_user_count = len(
+            {
+                session["username"]
+                for session in display_sessions
+                if session.get("username") and not str(session["username"]).startswith("unknown-session-")
+            }
+        )
+        self._record_traffic_sample(total_rx, total_tx, active_user_count)
+        with self.connect() as conn:
+            traffic_samples = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM traffic_samples ORDER BY bucket_time DESC LIMIT 24"
+                )
+            ]
+        traffic_samples.reverse()
+
         online_nodes = sum(1 for node in node_rows if node["status_display"] != "offline")
         expired_users = sum(1 for user in user_rows if user["status"] == "expired")
         agent_nodes_total = sum(1 for node in node_rows if node["source"] == "agent")
@@ -1568,6 +1653,16 @@ class ControlPlaneService:
             "online_nodes": online_nodes,
             "agent_nodes_online": agent_nodes_online,
         }
+
+        if not traffic_samples:
+            traffic_samples = [
+                {
+                    "bucket_time": to_iso(utcnow()),
+                    "ingress_mbps": round(float(total_rx), 2),
+                    "egress_mbps": round(float(total_tx), 2),
+                    "active_users": int(active_user_count),
+                }
+            ]
 
         traffic_chart = {
             "labels": [format_compact_datetime(item["bucket_time"]) for item in traffic_samples],
