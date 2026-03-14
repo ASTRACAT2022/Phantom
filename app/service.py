@@ -1178,6 +1178,13 @@ class ControlPlaneService:
         if not live_metrics.connected:
             return []
 
+        active_session_count = max(
+            int(live_metrics.active_sessions or 0),
+            sum(int(node.get("fptn_active_sessions", 0) or 0) for node in node_rows),
+        )
+        if active_session_count <= 0:
+            return []
+
         preferred_node_name = next(
             (
                 node["name"]
@@ -1187,7 +1194,12 @@ class ControlPlaneService:
             "Live FPTN",
         )
         synthetic_rows: list[dict[str, Any]] = []
-        for session_id, remote in sorted(live_metrics.per_session.items()):
+        sorted_sessions = sorted(
+            live_metrics.per_session.items(),
+            key=lambda item: int(item[0]) if str(item[0]).isdigit() else -1,
+            reverse=True,
+        )[:active_session_count]
+        for session_id, remote in sorted_sessions:
             incoming_bytes = int(remote.get("incoming_bytes", 0) or 0)
             outgoing_bytes = int(remote.get("outgoing_bytes", 0) or 0)
             synthetic_rows.append(
@@ -1235,10 +1247,6 @@ class ControlPlaneService:
         if synthetic_rows:
             return synthetic_rows
 
-        active_session_count = max(
-            int(live_metrics.active_sessions or 0),
-            sum(int(node.get("fptn_active_sessions", 0) or 0) for node in node_rows),
-        )
         for index in range(active_session_count):
             synthetic_rows.append(
                 {
