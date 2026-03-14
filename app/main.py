@@ -588,8 +588,8 @@ async def actions_users_bulk_unlimited(request: Request) -> RedirectResponse:
             "/settings",
             "Все пользователи успешно переведены на тариф Unlimited (0 Mbps).",
         )
-    except ValueError as exc:
-        return flash_redirect(request, "/settings", str(exc), level="error")
+    except Exception as exc:
+        return flash_redirect(request, "/settings", f"Ошибка: {exc}", level="error")
 
 
 @app.post("/api/node-agent/heartbeat")
