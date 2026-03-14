@@ -85,7 +85,7 @@ def write_fptn_config(
     for user in users:
         premium_flag = "1" if user["is_premium"] else "0"
         users_lines.append(
-            f'{user["username"]} {user["password_hash"]} {int(user["bandwidth_mbps"])} {premium_flag}'
+            f'{user["username"]} {user["password_hash"]} {int(user.get("effective_bandwidth_mbps", user["bandwidth_mbps"]))} {premium_flag}'
         )
 
     (config_dir / "users.list").write_text(

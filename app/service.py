@@ -789,7 +789,7 @@ class ControlPlaneService:
         return {"unlimited_profile_mbps": value}
 
     def _effective_bandwidth_mbps(self, user: dict[str, Any], speed_policy: dict[str, Any]) -> int:
-        if user.get("speed_mode") == "unlimited":
+        if user.get("speed_mode") == "unlimited" or int(user.get("bandwidth_mbps", 0) or 0) == 0:
             return int(speed_policy["unlimited_profile_mbps"])
         return int(user.get("bandwidth_mbps", 0) or 0)
 
