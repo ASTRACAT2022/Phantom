@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shlex
 import shutil
 import socket
 import ssl
@@ -37,6 +38,19 @@ FPTN_SYNC_FILES = (
 DEFAULT_ENV_PATH = "/etc/phantom-node-controller.env"
 
 
+def _decode_env_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if not value:
+        return ""
+    try:
+        parts = shlex.split(value, posix=True)
+    except ValueError:
+        return value.strip('"').strip("'")
+    if not parts:
+        return ""
+    return parts[0]
+
+
 def load_env_file(path: str) -> None:
     env_path = Path(path)
     if not env_path.exists():
@@ -46,8 +60,7 @@ def load_env_file(path: str) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key.strip(), value)
+        os.environ.setdefault(key.strip(), _decode_env_value(value))
 
 
 @dataclass
@@ -324,8 +337,8 @@ def sync_panel_fptn_config(config: AgentConfig) -> tuple[bool, str]:
 def build_config() -> AgentConfig:
     load_env_file(os.getenv("PHANTOM_NODE_ENV_FILE", DEFAULT_ENV_PATH))
     hostname = socket.gethostname()
-    panel_url = os.getenv("PHANTOM_PANEL_URL", "http://127.0.0.1:8000").rstrip("/")
-    shared_token = os.getenv("PHANTOM_SHARED_TOKEN", "phantom-node-shared-token")
+    panel_url = os.getenv("PHANTOM_PANEL_URL", "http://127.0.0.1:8000").strip().rstrip("/")
+    shared_token = os.getenv("PHANTOM_SHARED_TOKEN", "phantom-node-shared-token").strip()
     transport = os.getenv("PHANTOM_NODE_TRANSPORT", "http").strip().lower() or "http"
     request_timeout = int(os.getenv("PHANTOM_REQUEST_TIMEOUT", "5"))
     grpc_port = int(os.getenv("PHANTOM_PANEL_GRPC_PORT", "50061"))
@@ -356,16 +369,16 @@ def build_config() -> AgentConfig:
         shared_token=shared_token,
         transport=transport,
         grpc_target=grpc_target,
-        agent_id=os.getenv("PHANTOM_AGENT_ID", hostname),
-        node_name=os.getenv("FPTN_NODE_NAME", hostname),
+        agent_id=os.getenv("PHANTOM_AGENT_ID", hostname).strip() or hostname,
+        node_name=os.getenv("FPTN_NODE_NAME", hostname).strip() or hostname,
         node_host=raw_host or panel_defaults.get("host", "") or hostname,
         node_port=int(raw_port or panel_defaults.get("port", 8443)),
-        region=raw_region or panel_defaults.get("region", "Unknown"),
-        tier=raw_tier or panel_defaults.get("tier", "public"),
-        cert_path=os.getenv("FPTN_CERT_PATH", "/etc/fptn/server.crt"),
-        fptn_config_dir=os.getenv("FPTN_CONFIG_DIR", "/etc/fptn"),
-        metrics_url=os.getenv("LOCAL_FPTN_METRICS_URL", ""),
-        interface=os.getenv("PHANTOM_NET_INTERFACE", ""),
+        region=raw_region or str(panel_defaults.get("region", "Unknown")).strip() or "Unknown",
+        tier=raw_tier or str(panel_defaults.get("tier", "public")).strip().lower() or "public",
+        cert_path=os.getenv("FPTN_CERT_PATH", "/etc/fptn/server.crt").strip(),
+        fptn_config_dir=os.getenv("FPTN_CONFIG_DIR", "/etc/fptn").strip(),
+        metrics_url=os.getenv("LOCAL_FPTN_METRICS_URL", "").strip(),
+        interface=os.getenv("PHANTOM_NET_INTERFACE", "").strip(),
         interval_seconds=int(os.getenv("PHANTOM_HEARTBEAT_INTERVAL", "30")),
         fptn_sync_interval_seconds=int(os.getenv("PHANTOM_FPTN_SYNC_INTERVAL", "5")),
         request_timeout=request_timeout,

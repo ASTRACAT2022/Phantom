@@ -810,6 +810,16 @@ class ControlPlaneService:
             raise ValueError("Unsupported status.")
         return normalized
 
+    def _normalize_node_tier(self, tier: Optional[str]) -> str:
+        normalized = (tier or "public").strip().lower()
+        if normalized not in {"public", "premium", "censored"}:
+            return "public"
+        return normalized
+
+    def _clean_node_text(self, value: Any, fallback: str = "") -> str:
+        cleaned = str(value or "").strip()
+        return cleaned or fallback
+
     def _resolve_user_row(
         self,
         conn: DatabaseConnection,
@@ -1296,25 +1306,30 @@ class ControlPlaneService:
         now = utcnow()
 
         with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM nodes WHERE agent_id = ?",
+                (agent_id,),
+            ).fetchone()
             defaults = self._default_node_config(self._get_meta(conn))
             node_defaults = {
-                "name": node_payload.get("name", agent_id),
-                "host": node_payload.get("host", defaults["host"]),
+                "name": self._clean_node_text(node_payload.get("name"), agent_id),
+                "host": self._clean_node_text(node_payload.get("host"), str(defaults["host"])),
                 "port": int(node_payload.get("port", defaults["port"])),
-                "region": node_payload.get("region", defaults["region"]),
-                "tier": node_payload.get("tier", defaults["tier"]),
-                "md5_fingerprint": node_payload.get("md5_fingerprint", ""),
-                "hostname": node_payload.get("hostname", system_payload.get("hostname", "")),
+                "region": self._clean_node_text(node_payload.get("region"), str(defaults["region"])),
+                "tier": self._normalize_node_tier(node_payload.get("tier", defaults["tier"])),
+                "md5_fingerprint": self._clean_node_text(node_payload.get("md5_fingerprint", "")).lower(),
+                "hostname": self._clean_node_text(
+                    node_payload.get("hostname", system_payload.get("hostname", "")),
+                ),
             }
             if not node_defaults["name"]:
                 raise ValueError("node.name is required.")
             if not node_defaults["host"]:
                 raise ValueError("node.host is required.")
-
-            existing = conn.execute(
-                "SELECT * FROM nodes WHERE agent_id = ?",
-                (agent_id,),
-            ).fetchone()
+            if existing and not node_defaults["md5_fingerprint"]:
+                node_defaults["md5_fingerprint"] = self._clean_node_text(
+                    existing.get("md5_fingerprint", ""),
+                ).lower()
             requires_sync = False
 
             if existing:
