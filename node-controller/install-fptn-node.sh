@@ -362,6 +362,15 @@ from app.service import ControlPlaneService
 settings = load_settings()
 service = ControlPlaneService(settings)
 service.initialize()
+defaults = service.dashboard()["node_defaults"]
+service.update_node_defaults(
+    default_node_host=str(defaults.get("host", "")),
+    default_node_port=int(defaults.get("port", 8443) or 8443),
+    default_node_tier=str(defaults.get("tier", "public")),
+    default_node_region=str(defaults.get("region", "Unassigned")),
+    default_proxy_domain=${PROXY_DOMAIN@Q},
+    node_transport_hint=str(defaults.get("transport_hint", "")),
+)
 service.sync_fptn()
 print("Panel synced to local FPTN config dir.")
 PY

@@ -212,7 +212,7 @@ def panel_base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
-def node_deploy_context(request: Request) -> dict[str, object]:
+def node_deploy_context(request: Request, node_defaults: dict[str, object]) -> dict[str, object]:
     panel_url = panel_base_url(request)
     panel_host = request.url.hostname or "SERVER_IP"
     default_transport = "grpc" if settings.node_agent_grpc_enabled else "http"
@@ -229,7 +229,7 @@ def node_deploy_context(request: Request) -> dict[str, object]:
         "repo_ref": PHANTOM_GITHUB_REF,
         "agent_installer_url": f"{PHANTOM_NODE_CONTROLLER_RAW_BASE}/install-via-github.sh",
         "full_stack_installer_url": f"{PHANTOM_NODE_CONTROLLER_RAW_BASE}/install-fptn-node.sh",
-        "default_proxy_domain": "vk.ru",
+        "default_proxy_domain": node_defaults.get("proxy_domain", "vk.ru"),
         "default_dns_primary": "77.239.113.0",
         "default_dns_secondary": "108.165.164.201",
         "fptn_image": "fptnvpn/fptn-vpn-server:latest",
@@ -258,7 +258,7 @@ def render_page(
         }
     )
     if page_key == "nodes":
-        context["node_deploy"] = node_deploy_context(request)
+        context["node_deploy"] = node_deploy_context(request, context["node_defaults"])
     return templates.TemplateResponse(template_name, context)
 
 
@@ -497,6 +497,7 @@ async def update_node_defaults(
     default_node_port: int = Form(...),
     default_node_tier: str = Form(...),
     default_node_region: str = Form(...),
+    default_proxy_domain: str = Form(default="vk.ru"),
     node_transport_hint: str = Form(default=""),
 ) -> RedirectResponse:
     try:
@@ -505,6 +506,7 @@ async def update_node_defaults(
             default_node_port=default_node_port,
             default_node_tier=default_node_tier,
             default_node_region=default_node_region,
+            default_proxy_domain=default_proxy_domain,
             node_transport_hint=node_transport_hint,
         )
         return redirect_back(

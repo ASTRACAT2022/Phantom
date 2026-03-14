@@ -39,6 +39,10 @@
             </label>
           </div>
           <label class="field">
+            <span>Default proxy domain / SNI</span>
+            <input class="input" type="text" name="default_proxy_domain" value="{{ node_defaults.proxy_domain }}" placeholder="vk.ru" required />
+          </label>
+          <label class="field">
             <span>Transport hint</span>
             <input class="input" type="text" name="node_transport_hint" value="{{ node_defaults.transport_hint }}" />
           </label>
@@ -90,6 +94,7 @@
             <div class="list-row"><span>Default port</span><strong>{{ node_defaults.port }}</strong></div>
             <div class="list-row"><span>Default tier</span><strong>{{ node_defaults.tier }}</strong></div>
             <div class="list-row"><span>Default region</span><strong>{{ node_defaults.region }}</strong></div>
+            <div class="list-row"><span>Default proxy domain</span><strong>{{ node_defaults.proxy_domain }}</strong></div>
             <div class="list-row"><span>Full speed export</span><strong>{{ speed_policy.unlimited_profile_mbps }} Mbps</strong></div>
             <div class="list-row"><span>Config dir</span><strong class="font-mono text-xs">{{ config_dir }}</strong></div>
           </div>

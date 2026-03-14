@@ -755,6 +755,7 @@ class ControlPlaneService:
             "port": int(source.get("default_node_port", "8443") or 8443),
             "tier": source.get("default_node_tier", "public"),
             "region": source.get("default_node_region", "Unassigned"),
+            "proxy_domain": source.get("default_proxy_domain", "vk.ru"),
             "transport_hint": source.get("node_transport_hint", "Use IP and custom port. Domain/SSL on panel is optional."),
         }
 
@@ -912,6 +913,7 @@ class ControlPlaneService:
         default_node_port: int,
         default_node_tier: str,
         default_node_region: str,
+        default_proxy_domain: str,
         node_transport_hint: str,
     ) -> None:
         if default_node_tier not in {"public", "premium", "censored"}:
@@ -919,12 +921,14 @@ class ControlPlaneService:
         port = int(default_node_port)
         if port < 1 or port > 65535:
             raise ValueError("Port must be between 1 and 65535.")
+        proxy_domain = default_proxy_domain.strip() or "vk.ru"
 
         with self.connect() as conn:
             self._set_meta(conn, "default_node_host", default_node_host.strip())
             self._set_meta(conn, "default_node_port", str(port))
             self._set_meta(conn, "default_node_tier", default_node_tier)
             self._set_meta(conn, "default_node_region", default_node_region.strip() or "Unassigned")
+            self._set_meta(conn, "default_proxy_domain", proxy_domain)
             self._set_meta(conn, "node_transport_hint", node_transport_hint.strip())
             conn.commit()
 
