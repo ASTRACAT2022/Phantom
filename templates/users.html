@@ -71,13 +71,87 @@
     </section>
 
     <section class="panel-card space-y-4">
-      <div>
-        <h2 class="panel-title">Пользователи и подписки</h2>
-        <p class="panel-subtitle">
-          Все операции по пользователям теперь собраны в одном разделе без конкуренции с сессиями и инфраструктурой.
-        </p>
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <h2 class="panel-title">Пользователи и подписки</h2>
+          <p class="panel-subtitle">
+            Все операции по пользователям теперь собраны в одном разделе без конкуренции с сессиями и инфраструктурой.
+          </p>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] xl:w-[34rem]">
+          <label class="field">
+            <span>Поиск по username или FPTN token</span>
+            <input
+              class="input"
+              id="users-search-input"
+              type="search"
+              placeholder="client01 или fptn:eyJ2..."
+              autocomplete="off"
+            />
+          </label>
+          <button class="btn btn-ghost sm:self-end" id="users-search-clear" type="button">
+            Очистить
+          </button>
+        </div>
+      </div>
+      <div class="text-sm text-slate-500" id="users-search-meta">
+        Показаны все {{ users|length }} пользователей.
       </div>
       {% include "_users_table.html" %}
     </section>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const usersSearchInput = document.getElementById("users-search-input");
+    const usersSearchClear = document.getElementById("users-search-clear");
+    const usersSearchMeta = document.getElementById("users-search-meta");
+    const usersRows = Array.from(document.querySelectorAll("[data-user-search]"));
+    const usersEmptyState = document.getElementById("users-search-empty");
+
+    function updateUsersSearch() {
+      if (!usersSearchInput || !usersSearchMeta) return;
+
+      const query = usersSearchInput.value.trim().toLowerCase();
+      let visibleCount = 0;
+
+      usersRows.forEach((row) => {
+        const haystack = (row.dataset.userSearch || "").toLowerCase();
+        const matches = !query || haystack.includes(query);
+        row.style.display = matches ? "" : "none";
+        if (matches) {
+          visibleCount += 1;
+        }
+      });
+
+      if (usersSearchClear) {
+        usersSearchClear.disabled = !query;
+      }
+
+      if (usersEmptyState) {
+        usersEmptyState.hidden = visibleCount > 0;
+      }
+
+      if (!query) {
+        usersSearchMeta.textContent = `Показаны все ${usersRows.length} пользователей.`;
+        return;
+      }
+
+      usersSearchMeta.textContent = `Найдено ${visibleCount} из ${usersRows.length} пользователей.`;
+    }
+
+    if (usersSearchInput) {
+      usersSearchInput.addEventListener("input", updateUsersSearch);
+      updateUsersSearch();
+    }
+
+    if (usersSearchClear && usersSearchInput) {
+      usersSearchClear.addEventListener("click", () => {
+        usersSearchInput.value = "";
+        updateUsersSearch();
+        usersSearchInput.focus();
+      });
+    }
+  </script>
 {% endblock %}

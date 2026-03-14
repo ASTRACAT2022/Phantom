@@ -12,7 +12,9 @@
     </thead>
     <tbody>
       {% for user in users %}
-        <tr>
+        <tr
+          data-user-search="{{ (user.username ~ ' ' ~ (user.key.access_link if user.key else '') ~ ' ' ~ (user.key.token_payload if user.key else ''))|lower|e }}"
+        >
           <td>
             <div class="space-y-1">
               <div class="flex flex-wrap items-center gap-2">
@@ -108,4 +110,7 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
+<div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500" id="users-search-empty" hidden>
+  Ничего не найдено. Попробуйте username пользователя или полный `fptn:` token.
 </div>
