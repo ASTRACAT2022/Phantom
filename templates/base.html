@@ -116,11 +116,11 @@
       </div>
     </div>
     <script>
-      function copyText(value) {
+      function copyText(value, label = "текст") {
         navigator.clipboard.writeText(value).then(() => {
           const status = document.getElementById("clipboard-status");
           if (!status) return;
-          status.textContent = "Скопировано в буфер обмена.";
+          status.textContent = `Скопировано: ${label}.`;
           status.classList.remove("opacity-0");
           window.setTimeout(() => status.classList.add("opacity-0"), 2000);
         });
