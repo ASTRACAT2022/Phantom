@@ -76,7 +76,7 @@
                     >
                       Копировать
                     </button>
-                    <a class="btn btn-ghost" href="/users/{{ user.id }}/config">
+                    <a class="btn btn-ghost" href="/users/{{ user.id }}/config?v={{ (user.key.rotated_at or '')|replace(':', '')|replace('+', '-') }}">
                       Скачать `.fptn`
                     </a>
                   </div>
