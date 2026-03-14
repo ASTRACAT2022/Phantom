@@ -195,8 +195,24 @@ install_dependencies() {
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  if ! apt-get install -y ca-certificates curl openssl docker.io docker-compose-plugin; then
-    apt-get install -y ca-certificates curl openssl docker.io docker-compose
+  apt-get install -y ca-certificates curl openssl
+
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
+      systemctl enable docker >/dev/null 2>&1 || true
+      systemctl restart docker >/dev/null 2>&1 || true
+      return
+    fi
+    if ! apt-get install -y docker-compose-plugin; then
+      apt-get install -y docker-compose
+    fi
+    systemctl enable docker >/dev/null 2>&1 || true
+    systemctl restart docker >/dev/null 2>&1 || true
+    return
+  fi
+
+  if ! apt-get install -y docker.io docker-compose-plugin; then
+    apt-get install -y docker.io docker-compose
   fi
   systemctl enable docker
   systemctl restart docker
