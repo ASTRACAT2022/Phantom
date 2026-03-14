@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/phantom-node-controller.env
-ExecStart=/usr/bin/python3 /opt/phantom-node-controller/agent.py
+ExecStart=/bin/sh -lc 'if [ -x /opt/phantom-node-controller/.venv/bin/python ]; then exec /opt/phantom-node-controller/.venv/bin/python /opt/phantom-node-controller/agent.py; else exec /usr/bin/python3 /opt/phantom-node-controller/agent.py; fi'
 Restart=always
 RestartSec=5
 User=root

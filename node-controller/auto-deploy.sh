@@ -18,9 +18,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/phantom-node-controller"
+VENV_DIR="${INSTALL_DIR}/.venv"
 ENV_FILE="/etc/phantom-node-controller.env"
 SERVICE_FILE="/etc/systemd/system/phantom-node-controller.service"
 SERVICE_NAME="phantom-node-controller.service"
+NODE_PYTHON_BIN="/usr/bin/python3"
 
 PANEL_URL="${PHANTOM_PANEL_URL:-}"
 SHARED_TOKEN="${PHANTOM_SHARED_TOKEN:-}"
@@ -112,7 +114,7 @@ deregister_existing_node() {
   local max_attempts=10
 
   while (( attempt <= max_attempts )); do
-    if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --deregister-agent-id "${target_agent_id}"; then
+    if "${NODE_PYTHON_BIN}" "${INSTALL_DIR}/agent.py" --deregister-agent-id "${target_agent_id}"; then
       echo "Removed previous node registration for agent_id=${target_agent_id}."
       return 0
     fi
@@ -137,7 +139,7 @@ run_agent_once_with_retries() {
   local max_attempts=12
 
   while (( attempt <= max_attempts )); do
-    if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --once >/tmp/phantom-node-once.json 2>/tmp/phantom-node-once.err; then
+    if "${NODE_PYTHON_BIN}" "${INSTALL_DIR}/agent.py" --once >/tmp/phantom-node-once.json 2>/tmp/phantom-node-once.err; then
       echo "Validated node heartbeat against panel."
       return 0
     fi
@@ -155,7 +157,7 @@ run_agent_once_with_retries() {
 
 run_self_check_or_fail() {
   local output_file="/tmp/phantom-node-self-check.json"
-  if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --self-check >"${output_file}" 2>/tmp/phantom-node-self-check.err; then
+  if "${NODE_PYTHON_BIN}" "${INSTALL_DIR}/agent.py" --self-check >"${output_file}" 2>/tmp/phantom-node-self-check.err; then
     echo "Validated local FPTN stack and node-controller self-check."
     return 0
   fi
@@ -164,6 +166,34 @@ run_self_check_or_fail() {
   cat /tmp/phantom-node-self-check.err >&2 || true
   cat "${output_file}" >&2 || true
   exit 1
+}
+
+ensure_grpc_runtime() {
+  if [[ "${NODE_TRANSPORT}" != "grpc" ]]; then
+    NODE_PYTHON_BIN="/usr/bin/python3"
+    return
+  fi
+
+  if /usr/bin/python3 -c 'import grpc' >/dev/null 2>&1; then
+    NODE_PYTHON_BIN="/usr/bin/python3"
+    return
+  fi
+
+  if ! /usr/bin/python3 -m venv --help >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y python3-venv
+    else
+      echo "python3-venv is required to install grpcio for gRPC transport." >&2
+      exit 1
+    fi
+  fi
+
+  /usr/bin/python3 -m venv "${VENV_DIR}"
+  "${VENV_DIR}/bin/pip" install --upgrade pip >/dev/null
+  "${VENV_DIR}/bin/pip" install "grpcio>=1.74,<1.76" >/dev/null
+  NODE_PYTHON_BIN="${VENV_DIR}/bin/python"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -311,6 +341,7 @@ fi
 install -d "${INSTALL_DIR}"
 install -m 755 "${SCRIPT_DIR}/agent.py" "${INSTALL_DIR}/agent.py"
 install -m 644 "${SCRIPT_DIR}/phantom-node-controller.service" "${SERVICE_FILE}"
+ensure_grpc_runtime
 
 if [[ "${NODE_TRANSPORT}" == "grpc" && -z "${PANEL_GRPC_TARGET}" ]]; then
   PANEL_GRPC_TARGET="$(
