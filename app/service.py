@@ -2532,7 +2532,7 @@ class ControlPlaneService:
 
             row = conn.execute(
                 """
-                SELECT users.username, access_keys.token_payload
+                SELECT users.username, access_keys.token_payload, access_keys.rotated_at
                 FROM users
                 JOIN access_keys ON access_keys.user_id = users.id
                 WHERE users.id = ?
@@ -2547,7 +2547,7 @@ class ControlPlaneService:
                 with self.connect() as retry_conn:
                     retry_row = retry_conn.execute(
                         """
-                        SELECT users.username, access_keys.token_payload
+                        SELECT users.username, access_keys.token_payload, access_keys.rotated_at
                         FROM users
                         JOIN access_keys ON access_keys.user_id = users.id
                         WHERE users.id = ?
@@ -2565,8 +2565,13 @@ class ControlPlaneService:
                 return {
                     "username": retry_row["username"],
                     "token_payload": retry_row["token_payload"],
+                    "rotated_at": retry_row["rotated_at"],
                 }
-            return {"username": row["username"], "token_payload": row["token_payload"]}
+            return {
+                "username": row["username"],
+                "token_payload": row["token_payload"],
+                "rotated_at": row["rotated_at"],
+            }
 
     def sync_fptn(self) -> None:
         with self.connect() as conn:

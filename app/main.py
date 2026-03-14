@@ -449,11 +449,19 @@ async def update_user_speed_mode(
 @app.get("/users/{user_id}/config")
 async def download_user_config(user_id: str) -> Response:
     bundle = service.get_access_bundle(user_id)
-    filename = f'{bundle["username"]}.fptn'
+    rotated_at = str(bundle.get("rotated_at", "") or "").replace(":", "").replace("-", "")
+    rotated_at = rotated_at.replace("+0000", "Z").replace("+00:00", "Z")
+    suffix = f"-{rotated_at}" if rotated_at else ""
+    filename = f'{bundle["username"]}{suffix}.fptn'
     return Response(
         content=bundle["token_payload"],
         media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
