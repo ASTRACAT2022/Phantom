@@ -108,6 +108,34 @@ detect_host_ip() {
   hostname -I 2>/dev/null | awk '{print $1}'
 }
 
+grpc_target_reachable() {
+  local target="$1"
+  if [[ -z "${target}" ]]; then
+    return 1
+  fi
+
+  /usr/bin/python3 - "${target}" <<'PY'
+import socket
+import sys
+
+target = sys.argv[1].strip()
+if not target or ":" not in target:
+    raise SystemExit(1)
+
+host, port = target.rsplit(":", 1)
+try:
+    port_num = int(port)
+except ValueError:
+    raise SystemExit(1)
+
+try:
+    with socket.create_connection((host, port_num), timeout=2):
+        raise SystemExit(0)
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
 deregister_existing_node() {
   local target_agent_id="$1"
   local attempt=1
@@ -355,6 +383,12 @@ host = urlsplit(panel_url).hostname or panel_url
 print(f"{host}:{grpc_port}")
 PY
   )"
+fi
+
+if [[ "${NODE_TRANSPORT}" == "grpc" ]] && ! grpc_target_reachable "${PANEL_GRPC_TARGET}"; then
+  echo "gRPC target ${PANEL_GRPC_TARGET:-<empty>} is unreachable; falling back to HTTP transport." >&2
+  NODE_TRANSPORT="http"
+  PANEL_GRPC_TARGET=""
 fi
 
 {
