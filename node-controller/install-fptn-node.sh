@@ -41,6 +41,7 @@ PANEL_ENV_FILE="/etc/phantom-control-plane.env"
 PANEL_SERVICE_NAME="phantom-control-plane.service"
 # Intentionally sorts after local `99-*.conf` profiles so FPTN tuning wins.
 PERF_SYSCTL_FILE="/etc/sysctl.d/99-z-phantom-fptn-performance.conf"
+LEGACY_PERF_SYSCTL_FILE="/etc/sysctl.d/98-phantom-fptn-performance.conf"
 
 usage() {
   cat <<EOF
@@ -217,6 +218,11 @@ detect_compose_cmd() {
 apply_network_tuning() {
   if [[ "${SKIP_NET_TUNING}" == "true" ]]; then
     return
+  fi
+
+  # Clean up the old lower-priority profile so reruns migrate existing nodes too.
+  if [[ -f "${LEGACY_PERF_SYSCTL_FILE}" && "${LEGACY_PERF_SYSCTL_FILE}" != "${PERF_SYSCTL_FILE}" ]]; then
+    rm -f "${LEGACY_PERF_SYSCTL_FILE}"
   fi
 
   cat > "${PERF_SYSCTL_FILE}" <<'EOF'
