@@ -136,7 +136,7 @@ def load_settings() -> Settings:
         fptn_config_dir=Path(
             os.getenv("FPTN_CONFIG_DIR", str(BASE_DIR / "fptn-config"))
         ),
-        service_name=os.getenv("FPTN_SERVICE_NAME", "PHANTOM.NET"),
+        service_name=os.getenv("FPTN_SERVICE_NAME", "ASTRACAT.Network"),
         metrics_url=metrics_url,
         metrics_insecure_tls=metrics_insecure_tls,
         node_agent_token=os.getenv("NODE_CONTROLLER_SHARED_TOKEN", "phantom-node-shared-token"),
