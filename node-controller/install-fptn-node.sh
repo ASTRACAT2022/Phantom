@@ -19,7 +19,7 @@ NODE_TIER="${FPTN_NODE_TIER:-}"
 PROXY_DOMAIN="${FPTN_DEFAULT_PROXY_DOMAIN:-vk.ru}"
 DNS_IPV4_PRIMARY="${FPTN_DNS_IPV4_PRIMARY:-77.239.113.0}"
 DNS_IPV4_SECONDARY="${FPTN_DNS_IPV4_SECONDARY:-108.165.164.201}"
-FPTN_IMAGE="${FPTN_SERVER_IMAGE:-fptnvpn/fptn-vpn-server:latest}"
+FPTN_IMAGE="${FPTN_SERVER_IMAGE:-astracat/fptn-vpn-server:latest}"
 FPTN_PROXY_IMAGE="${FPTN_PROXY_IMAGE:-fptnvpn/fptn-proxy-server}"
 FPTN_DIR="${FPTN_SERVER_DIR:-/opt/fptn-server}"
 FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/opt/fptn-server-data}"
@@ -76,7 +76,7 @@ Optional:
   --prometheus-key KEY       Secret for FPTN metrics, default: auto-generated
   --max-sessions COUNT       Default: 3
   --metrics-url URL          Forwarded to node-controller as LOCAL_FPTN_METRICS_URL
-  --fptn-image IMAGE         Docker image, default: fptnvpn/fptn-vpn-server:latest
+  --fptn-image IMAGE         Docker image, default: astracat/fptn-vpn-server:latest
   --fptn-proxy-image IMAGE   Docker image, default: fptnvpn/fptn-proxy-server
   --fptn-dir PATH            Docker compose dir, default: /opt/fptn-server
   --fptn-config-dir PATH     FPTN config dir, default: /opt/fptn-server-data

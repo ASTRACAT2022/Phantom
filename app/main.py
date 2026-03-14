@@ -232,7 +232,7 @@ def node_deploy_context(request: Request, node_defaults: dict[str, object]) -> d
         "default_proxy_domain": node_defaults.get("proxy_domain", "vk.ru"),
         "default_dns_primary": "77.239.113.0",
         "default_dns_secondary": "108.165.164.201",
-        "fptn_image": "fptnvpn/fptn-vpn-server:latest",
+        "fptn_image": "astracat/fptn-vpn-server:latest",
     }
 
 
