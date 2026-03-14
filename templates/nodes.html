@@ -108,6 +108,7 @@
           <div class="notice-card">
             Панель уже подставляет текущий `NODE_CONTROLLER_SHARED_TOKEN` и знает, включён ли `gRPC`.
             Для agent-ноды ручное добавление в таблицу не нужно: после heartbeat она появится сама.
+            Если `gRPC` на панели недоступен, installer автоматически переключится на `http`.
           </div>
         </section>
 
@@ -236,8 +237,32 @@
       return `'${normalized.replace(/'/g, `'\"'\"'`)}'`;
     }
 
+    function normalizePanelUrl(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return nodeDeploy.panel_url;
+
+      try {
+        const parsed = new URL(raw);
+        if (parsed.hostname === "0.0.0.0") {
+          return window.location.origin;
+        }
+        return raw.replace(/\/+$/, "");
+      } catch {
+        return raw.replace(/\/+$/, "");
+      }
+    }
+
+    function updateGrpcFieldState() {
+      const transportEl = document.getElementById("deploy-transport");
+      const grpcEl = document.getElementById("deploy-grpc-target");
+      if (!transportEl || !grpcEl) return;
+      const grpcEnabled = transportEl.value === "grpc";
+      grpcEl.disabled = !grpcEnabled;
+      grpcEl.classList.toggle("opacity-60", !grpcEnabled);
+    }
+
     function buildDeployCommands() {
-      const panelUrl = document.getElementById("deploy-panel-url").value.trim() || nodeDeploy.panel_url;
+      const panelUrl = normalizePanelUrl(document.getElementById("deploy-panel-url").value);
       const nodeName = document.getElementById("deploy-node-name").value.trim() || "Edge Node";
       const nodeHost = document.getElementById("deploy-node-host").value.trim() || "NODE_PUBLIC_IP";
       const nodePort = document.getElementById("deploy-node-port").value.trim() || "{{ node_defaults.port }}";
@@ -303,6 +328,7 @@
       document.getElementById("full-stack-command").value = fullStack;
       document.getElementById("agent-only-command").value = agentOnly;
       document.getElementById("redeploy-command").value = redeploy;
+      updateGrpcFieldState();
     }
 
     function copyCommandText(id) {
@@ -337,6 +363,7 @@
       }
 
       buildDeployCommands();
+      updateGrpcFieldState();
     });
   </script>
 {% endblock %}
