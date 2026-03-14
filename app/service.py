@@ -2329,7 +2329,28 @@ class ControlPlaneService:
         return deleted
 
     def get_access_bundle(self, user_id: str) -> dict[str, str]:
+        self.sync_fptn()
         with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, username, password_plain, is_premium
+                FROM users
+                WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError("Access key not found.")
+
+            self._upsert_access_key(
+                conn,
+                row["id"],
+                row["username"],
+                row["password_plain"],
+                bool(row["is_premium"]),
+            )
+            conn.commit()
+
             row = conn.execute(
                 """
                 SELECT users.username, access_keys.token_payload
