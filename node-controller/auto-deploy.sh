@@ -38,6 +38,7 @@ FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/etc/fptn}"
 METRICS_URL="${LOCAL_FPTN_METRICS_URL:-}"
 NET_INTERFACE="${PHANTOM_NET_INTERFACE:-}"
 HEARTBEAT_INTERVAL="${PHANTOM_HEARTBEAT_INTERVAL:-30}"
+FPTN_SYNC_INTERVAL="${PHANTOM_FPTN_SYNC_INTERVAL:-5}"
 REQUEST_TIMEOUT="${PHANTOM_REQUEST_TIMEOUT:-5}"
 REPLACE_EXISTING="false"
 REPLACE_AGENT_ID="${PHANTOM_REPLACE_AGENT_ID:-}"
@@ -67,6 +68,7 @@ Optional:
   --metrics-url URL          Local FPTN metrics endpoint
   --interface IFACE          Network interface, default: auto-detect from route
   --heartbeat-interval SEC   Default: 30
+  --fptn-sync-interval SEC   Default: 5
   --request-timeout SEC      Default: 5
   --replace-existing         Remove old node record from the panel before re-registering
   --replace-agent-id ID      Agent id to remove first, default: current --agent-id / hostname
@@ -230,6 +232,10 @@ while [[ $# -gt 0 ]]; do
       HEARTBEAT_INTERVAL="$2"
       shift 2
       ;;
+    --fptn-sync-interval)
+      FPTN_SYNC_INTERVAL="$2"
+      shift 2
+      ;;
     --request-timeout)
       REQUEST_TIMEOUT="$2"
       shift 2
@@ -337,6 +343,7 @@ fi
   write_env_var "LOCAL_FPTN_METRICS_URL" "${METRICS_URL}"
   write_env_var "PHANTOM_NET_INTERFACE" "${NET_INTERFACE}"
   write_env_var "PHANTOM_HEARTBEAT_INTERVAL" "${HEARTBEAT_INTERVAL}"
+  write_env_var "PHANTOM_FPTN_SYNC_INTERVAL" "${FPTN_SYNC_INTERVAL}"
   write_env_var "PHANTOM_REQUEST_TIMEOUT" "${REQUEST_TIMEOUT}"
 } > "${ENV_FILE}"
 

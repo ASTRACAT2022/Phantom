@@ -25,6 +25,13 @@ NODE_AGENT_GRPC_SERVICE = "phantom.nodeagent.NodeAgentService"
 NODE_AGENT_GRPC_GET_CONFIG = f"/{NODE_AGENT_GRPC_SERVICE}/GetConfig"
 NODE_AGENT_GRPC_HEARTBEAT = f"/{NODE_AGENT_GRPC_SERVICE}/Heartbeat"
 NODE_AGENT_GRPC_DEREGISTER = f"/{NODE_AGENT_GRPC_SERVICE}/Deregister"
+FPTN_SYNC_FILES = (
+    "users.list",
+    "servers.json",
+    "premium_servers.json",
+    "servers_censored_zone.json",
+    "service_name.txt",
+)
 
 
 DEFAULT_ENV_PATH = "/etc/phantom-node-controller.env"
@@ -60,6 +67,7 @@ class AgentConfig:
     metrics_url: str
     interface: str
     interval_seconds: int
+    fptn_sync_interval_seconds: int
     request_timeout: int
 
 
@@ -265,6 +273,54 @@ def fetch_panel_defaults_grpc(grpc_target: str, shared_token: str, timeout: int)
     return _grpc_request(grpc_target, NODE_AGENT_GRPC_GET_CONFIG, {}, shared_token, timeout)
 
 
+def fetch_panel_fptn_config_http(panel_url: str, shared_token: str, timeout: int) -> dict:
+    request = Request(
+        f"{panel_url}/api/node-agent/fptn-config",
+        headers={"Authorization": f"Bearer {shared_token}"},
+        method="GET",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def sync_panel_fptn_config(config: AgentConfig) -> tuple[bool, str]:
+    payload = fetch_panel_fptn_config_http(
+        config.panel_url,
+        config.shared_token,
+        config.request_timeout,
+    )
+    files = payload.get("files", {})
+    if not isinstance(files, dict) or not files:
+        return False, "panel returned empty FPTN config bundle"
+
+    updated_files: list[str] = []
+    config_dir = Path(config.fptn_config_dir)
+    for file_name in FPTN_SYNC_FILES:
+        if file_name not in files:
+            continue
+        target_path = config_dir / file_name
+        next_content = str(files[file_name] or "")
+        current_content = ""
+        if target_path.exists():
+            current_content = target_path.read_text(encoding="utf-8")
+        if current_content == next_content:
+            continue
+        _write_text_atomic(target_path, next_content)
+        updated_files.append(file_name)
+
+    if updated_files:
+        return True, f"synced {len(updated_files)} file(s): {', '.join(updated_files)}"
+    generated_at = str(payload.get('generated_at', '') or 'unknown time')
+    return True, f"already up to date (panel bundle {generated_at})"
+
+
 def build_config() -> AgentConfig:
     load_env_file(os.getenv("PHANTOM_NODE_ENV_FILE", DEFAULT_ENV_PATH))
     hostname = socket.gethostname()
@@ -311,6 +367,7 @@ def build_config() -> AgentConfig:
         metrics_url=os.getenv("LOCAL_FPTN_METRICS_URL", ""),
         interface=os.getenv("PHANTOM_NET_INTERFACE", ""),
         interval_seconds=int(os.getenv("PHANTOM_HEARTBEAT_INTERVAL", "30")),
+        fptn_sync_interval_seconds=int(os.getenv("PHANTOM_FPTN_SYNC_INTERVAL", "5")),
         request_timeout=request_timeout,
     )
 
@@ -466,11 +523,19 @@ def _users_list_check(config: AgentConfig) -> tuple[bool, str]:
 def build_self_check(config: AgentConfig, collector: LinuxCollector) -> dict:
     fingerprint = fingerprint_from_cert(config.cert_path)
     panel_ok, panel_message = _panel_config_check(config)
+    sync_ok = False
+    sync_message = "skipped"
+    if panel_ok:
+        try:
+            sync_ok, sync_message = sync_panel_fptn_config(config)
+        except Exception as exc:
+            sync_ok, sync_message = False, str(exc)
     port_ok, port_message = _tcp_check("127.0.0.1", config.node_port, config.request_timeout)
     metrics_ok, metrics_message = _metrics_check(config)
     users_ok, users_message = _users_list_check(config)
     checks = {
         "panel": {"ok": panel_ok, "message": panel_message},
+        "panel_fptn_sync": {"ok": sync_ok, "message": sync_message},
         "certificate": {
             "ok": bool(fingerprint),
             "message": f"fingerprint={fingerprint}" if fingerprint else f"certificate unreadable: {config.cert_path}",
@@ -490,8 +555,10 @@ def build_self_check(config: AgentConfig, collector: LinuxCollector) -> dict:
 
 
 def run_once(config: AgentConfig, collector: LinuxCollector) -> int:
+    synced, sync_message = sync_panel_fptn_config(config)
     payload = build_payload(config, collector)
     post_heartbeat(config, payload)
+    payload["panel_fptn_sync"] = {"ok": synced, "message": sync_message}
     print(json.dumps(payload, indent=2))
     return 0
 
@@ -509,21 +576,44 @@ def run_self_check(config: AgentConfig, collector: LinuxCollector) -> int:
 
 
 def run_forever(config: AgentConfig, collector: LinuxCollector) -> int:
+    heartbeat_interval = max(config.interval_seconds, 5)
+    sync_interval = max(config.fptn_sync_interval_seconds, 1)
+    next_sync_at = 0.0
+    next_heartbeat_at = 0.0
+
     while True:
         try:
-            payload = build_payload(config, collector)
-            post_heartbeat(config, payload)
-            print(
-                f"[heartbeat] sent node={config.node_name} "
-                f"rx={payload['system']['network_rx_mbps']}Mbps "
-                f"tx={payload['system']['network_tx_mbps']}Mbps "
-                f"sessions={payload['system']['fptn_active_sessions']}"
-            )
+            now = time.time()
+            did_work = False
+
+            if now >= next_sync_at:
+                _, sync_message = sync_panel_fptn_config(config)
+                print(f"[fptn-sync] {sync_message}")
+                next_sync_at = now + sync_interval
+                did_work = True
+
+            if now >= next_heartbeat_at:
+                payload = build_payload(config, collector)
+                post_heartbeat(config, payload)
+                print(
+                    f"[heartbeat] sent node={config.node_name} "
+                    f"rx={payload['system']['network_rx_mbps']}Mbps "
+                    f"tx={payload['system']['network_tx_mbps']}Mbps "
+                    f"sessions={payload['system']['fptn_active_sessions']}"
+                )
+                next_heartbeat_at = now + heartbeat_interval
+                did_work = True
+
+            if not did_work:
+                sleep_for = min(next_sync_at, next_heartbeat_at) - time.time()
+                time.sleep(max(min(sleep_for, 1.0), 0.2))
+                continue
         except URLError as exc:
             print(f"[heartbeat] panel unreachable: {exc}", file=sys.stderr)
+            time.sleep(2)
         except Exception as exc:
             print(f"[heartbeat] failed: {exc}", file=sys.stderr)
-        time.sleep(max(config.interval_seconds, 5))
+            time.sleep(2)
 
 
 def main() -> int:

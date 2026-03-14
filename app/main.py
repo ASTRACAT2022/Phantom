@@ -570,6 +570,14 @@ async def node_agent_config(
     return JSONResponse(service.get_node_agent_config())
 
 
+@app.get("/api/node-agent/fptn-config")
+async def node_agent_fptn_config(
+    authorization: Optional[str] = Header(default=None),
+) -> JSONResponse:
+    verify_node_agent(authorization)
+    return JSONResponse(service.export_fptn_config_bundle())
+
+
 @app.post("/api/node-agent/heartbeat")
 async def node_agent_heartbeat(
     request: Request,

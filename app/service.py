@@ -284,6 +284,13 @@ class ControlPlaneService:
     UNLIMITED_FPTN_BANDWIDTH_MBPS = 2047
     STALE_SESSION_TIMEOUT_MINUTES = 5
     TRAFFIC_SAMPLE_BUCKET_MINUTES = 5
+    FPTN_EXPORT_FILES = (
+        "users.list",
+        "servers.json",
+        "premium_servers.json",
+        "servers_censored_zone.json",
+        "service_name.txt",
+    )
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -908,6 +915,17 @@ class ControlPlaneService:
         config["grpc_enabled"] = self.settings.node_agent_grpc_enabled
         config["grpc_port"] = self.settings.node_agent_grpc_port
         return config
+
+    def export_fptn_config_bundle(self) -> dict[str, Any]:
+        self.sync_fptn()
+        files: dict[str, str] = {}
+        for file_name in self.FPTN_EXPORT_FILES:
+            path = self.settings.fptn_config_dir / file_name
+            files[file_name] = path.read_text(encoding="utf-8") if path.exists() else ""
+        return {
+            "generated_at": to_iso(utcnow()),
+            "files": files,
+        }
 
     def update_node_defaults(
         self,
@@ -1727,9 +1745,12 @@ class ControlPlaneService:
             host = str(row.get("host", "") or "").strip()
             port = int(row.get("port", 0) or 0)
             md5_fingerprint = str(row.get("md5_fingerprint", "") or "").strip().lower()
+            status = str(row.get("status", "") or "").strip().lower()
             if not host or port < 1 or port > 65535:
                 continue
             if not md5_fingerprint:
+                continue
+            if status == "offline":
                 continue
             if row.get("source") == "agent" and self._derive_node_status(row) == "offline":
                 continue

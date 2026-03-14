@@ -8,6 +8,9 @@
 - текущий сетевой трафик по интерфейсу;
 - число соединений к ноде;
 - `fptn_active_sessions`, если доступен локальный metrics endpoint.
+- синхронизирует `users.list`, `servers.json`, `premium_servers.json`, `servers_censored_zone.json` и `service_name.txt` из панели в локальный `FPTN_CONFIG_DIR`.
+
+По умолчанию агент шлёт heartbeat раз в `30` секунд, а FPTN-конфиг (`users.list` и server lists) подтягивает раз в `5` секунд. Это позволяет быстро доносить добавление/удаление пользователей до ноды без лишней нагрузки на heartbeat API.
 
 ## Быстрый деплой
 
