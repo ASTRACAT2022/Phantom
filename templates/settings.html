@@ -88,6 +88,36 @@
         </section>
 
         <section class="panel-card">
+          <h2 class="panel-title">Export Policy</h2>
+          <p class="panel-subtitle">
+            Для стабильности клиентам отдаётся не весь пул нод, а только ограниченное число лучших и здоровых узлов по каждому tier.
+          </p>
+          <form action="/actions/config/export-policy" method="post" class="mt-4 space-y-3">
+            <div class="grid gap-3 sm:grid-cols-3">
+              <label class="field">
+                <span>Public nodes</span>
+                <input class="input" type="number" name="max_public_nodes" min="1" max="64" value="{{ export_policy.max_public_nodes }}" required />
+              </label>
+              <label class="field">
+                <span>Premium nodes</span>
+                <input class="input" type="number" name="max_premium_nodes" min="1" max="64" value="{{ export_policy.max_premium_nodes }}" required />
+              </label>
+              <label class="field">
+                <span>Censored nodes</span>
+                <input class="input" type="number" name="max_censored_nodes" min="1" max="64" value="{{ export_policy.max_censored_nodes }}" required />
+              </label>
+            </div>
+            <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-3 text-xs leading-5 text-slate-600">
+              Сейчас в экспорт попадает: public <code>{{ export_summary.public_selected }}</code>,
+              premium <code>{{ export_summary.premium_selected }}</code>,
+              censored <code>{{ export_summary.censored_selected }}</code>.
+              Исключено: <code>{{ export_summary.excluded_total }}</code>.
+            </div>
+            <button class="btn btn-primary" type="submit">Сохранить export policy</button>
+          </form>
+        </section>
+
+        <section class="panel-card">
           <h2 class="panel-title">Что видят агенты</h2>
           <div class="mt-4 space-y-3">
             <div class="list-row"><span>Default host</span><strong>{{ node_defaults.host or "agent/local override" }}</strong></div>

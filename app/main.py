@@ -530,6 +530,20 @@ async def update_speed_policy(
         return redirect_back(request, str(exc), level="error", fallback="/settings")
 
 
+@app.post("/actions/config/export-policy")
+async def update_export_policy(
+    request: Request,
+    max_public_nodes: int = Form(...),
+    max_premium_nodes: int = Form(...),
+    max_censored_nodes: int = Form(...),
+) -> RedirectResponse:
+    try:
+        service.update_export_policy(max_public_nodes, max_premium_nodes, max_censored_nodes)
+        return redirect_back(request, "Node export policy updated.", fallback="/settings")
+    except Exception as exc:
+        return redirect_back(request, str(exc), level="error", fallback="/settings")
+
+
 def verify_node_agent(authorization: Optional[str]) -> None:
     if authorization != f"Bearer {settings.node_agent_token}":
         raise HTTPException(status_code=401, detail="Unauthorized node agent.")
