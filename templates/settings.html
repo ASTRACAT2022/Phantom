@@ -82,6 +82,7 @@
             <div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 p-3 text-xs leading-5 text-slate-600">
               Это значение уходит в `users.list` для пользователей с режимом <code>Full speed</code>.
               Ядро `FPTN` не поддерживает настоящий unlimited-флаг, поэтому панель использует высокий лимит вместо нуля.
+              Безопасный максимум здесь <code>2047 Mbps</code>: при <code>2048</code> и выше FPTN уже упирается в предел 32-bit значения.
             </div>
             <button class="btn btn-primary" type="submit">Сохранить speed policy</button>
           </form>

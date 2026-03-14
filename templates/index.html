@@ -284,8 +284,8 @@
                 </td>
                 <td>
                   <div class="space-y-1 text-sm">
-                    <div>{{ user.bandwidth_mbps }} Mbps</div>
-                    <div class="text-xs text-slate-500">FPTN username: <code>{{ user.username }}</code></div>
+                    <div>{{ user.speed_label }}</div>
+                    <div class="text-xs text-slate-500">FPTN username: <code>{{ user.username }}</code> · export {{ user.effective_bandwidth_mbps }} Mbps</div>
                   </div>
                 </td>
                 <td>

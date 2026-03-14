@@ -1538,7 +1538,7 @@ class ControlPlaneService:
                     "speed_mode": user.get("speed_mode", "limited"),
                     "effective_bandwidth_mbps": self._effective_bandwidth_mbps(user, speed_policy),
                     "speed_label": (
-                        "Full speed"
+                        f'Full speed ({self._effective_bandwidth_mbps(user, speed_policy)} Mbps cap)'
                         if user.get("speed_mode") == "unlimited"
                         else f'{int(user["bandwidth_mbps"])} Mbps'
                     ),
