@@ -453,10 +453,12 @@ sync_local_panel_with_fptn() {
     source "${PANEL_ENV_FILE}"
     set +a
     cd /opt/phantom-control-plane
-    /opt/phantom-control-plane/.venv/bin/python - <<'PY'
+    /opt/phantom-control-plane/.venv/bin/python - "${PROXY_DOMAIN}" <<'PY'
+import sys
 from app.config import load_settings
 from app.service import ControlPlaneService
 
+proxy_domain = sys.argv[1]
 settings = load_settings()
 service = ControlPlaneService(settings)
 service.initialize()
@@ -466,7 +468,7 @@ service.update_node_defaults(
     default_node_port=int(defaults.get("port", 8443) or 8443),
     default_node_tier=str(defaults.get("tier", "public")),
     default_node_region=str(defaults.get("region", "Unassigned")),
-    default_proxy_domain=${PROXY_DOMAIN@Q},
+    default_proxy_domain=proxy_domain,
     node_transport_hint=str(defaults.get("transport_hint", "")),
 )
 service.sync_fptn()
