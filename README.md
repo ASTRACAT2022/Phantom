@@ -156,6 +156,7 @@ sudo bash -s -- \
 А ещё этот же flow теперь есть прямо в панели на странице `Nodes`: кнопка `+ Новая прод-нода` генерирует готовые команды деплоя под текущий token, panel URL и transport.
 В мастер ноды добавлены поля `DNS Primary` и `DNS Secondary`; по умолчанию full-stack deploy использует `77.239.113.0` и `108.165.164.201`.
 Для live metrics full-stack deploy теперь поднимает локальный `fptn-proxy-server`, потому что сам upstream FPTN рекомендует скрапить метрики через него.
+Full-stack installer также применяет сетевой performance profile для ноды: `bbr`, `fq`, повышенные socket buffers и backlog, чтобы не упираться в дефолтные sysctl Linux на высоком throughput.
 
 One-shot деплой ноды:
 

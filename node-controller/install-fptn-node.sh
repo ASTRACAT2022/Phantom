@@ -35,9 +35,11 @@ REPLACE_EXISTING="false"
 REPLACE_AGENT_ID="${PHANTOM_REPLACE_AGENT_ID:-}"
 FPTN_ONLY="false"
 SKIP_DOCKER_INSTALL="false"
+SKIP_NET_TUNING="false"
 TMP_DIR=""
 PANEL_ENV_FILE="/etc/phantom-control-plane.env"
 PANEL_SERVICE_NAME="phantom-control-plane.service"
+PERF_SYSCTL_FILE="/etc/sysctl.d/98-phantom-fptn-performance.conf"
 
 usage() {
   cat <<EOF
@@ -82,6 +84,7 @@ Optional:
   --replace-agent-id ID      Explicit old agent id to remove
   --fptn-only                Deploy only FPTN, skip node-controller install
   --skip-docker-install      Do not apt install Docker / openssl
+  --skip-net-tuning          Do not apply Phantom network performance sysctl profile
   --help                     Show this help
 EOF
 }
@@ -208,6 +211,29 @@ detect_compose_cmd() {
   fi
   echo "docker compose is not available." >&2
   exit 1
+}
+
+apply_network_tuning() {
+  if [[ "${SKIP_NET_TUNING}" == "true" ]]; then
+    return
+  fi
+
+  cat > "${PERF_SYSCTL_FILE}" <<'EOF'
+# Phantom / FPTN throughput-oriented tuning
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 250000
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mtu_probing = 1
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+EOF
+
+  modprobe tcp_bbr 2>/dev/null || true
+  sysctl --system >/dev/null
 }
 
 write_compose_file() {
@@ -596,6 +622,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_DOCKER_INSTALL="true"
       shift
       ;;
+    --skip-net-tuning)
+      SKIP_NET_TUNING="true"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -651,6 +681,7 @@ install_dependencies
 ensure_command openssl
 ensure_command docker
 detect_compose_cmd
+apply_network_tuning
 write_compose_file
 ensure_certs
 start_fptn
