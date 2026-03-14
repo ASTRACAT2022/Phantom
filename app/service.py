@@ -1720,13 +1720,75 @@ class ControlPlaneService:
         for row in rows:
             host = str(row.get("host", "") or "").strip()
             port = int(row.get("port", 0) or 0)
+            md5_fingerprint = str(row.get("md5_fingerprint", "") or "").strip().lower()
             if not host or port < 1 or port > 65535:
+                continue
+            if not md5_fingerprint:
+                continue
+            if row.get("source") == "agent" and self._derive_node_status(row) == "offline":
                 continue
             eligible_rows.append(row)
         public_nodes = [row for row in eligible_rows if row["tier"] == "public"]
         premium_nodes = [row for row in eligible_rows if row["tier"] == "premium"]
         censored_nodes = [row for row in eligible_rows if row["tier"] == "censored"]
         return public_nodes, premium_nodes, censored_nodes
+
+    def _repair_user_hashes(self, conn: DatabaseConnection) -> bool:
+        updated = False
+        rows = conn.execute(
+            "SELECT id, password_plain, password_hash FROM users"
+        ).fetchall()
+        for row in rows:
+            expected_hash = hash_password(row["password_plain"])
+            if row["password_hash"] != expected_hash:
+                conn.execute(
+                    "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+                    (expected_hash, to_iso(utcnow()), row["id"]),
+                )
+                updated = True
+        return updated
+
+    def _users_list_hash_for_username(self, username: str) -> str:
+        users_list_path = self.settings.fptn_config_dir / "users.list"
+        if not users_list_path.exists():
+            return ""
+        for raw_line in users_list_path.read_text(encoding="utf-8").splitlines():
+            parts = raw_line.strip().split()
+            if len(parts) >= 2 and parts[0] == username:
+                return parts[1]
+        return ""
+
+    def _validate_token_payload(self, username: str, token_payload: str) -> tuple[bool, str]:
+        try:
+            payload = json.loads(token_payload)
+        except json.JSONDecodeError as exc:
+            return False, f"invalid token payload json: {exc}"
+
+        token_username = str(payload.get("username", "") or "")
+        token_password = str(payload.get("password", "") or "")
+        if token_username != username:
+            return False, "token username mismatch"
+        if not token_password:
+            return False, "token password is empty"
+
+        exported_hash = self._users_list_hash_for_username(username)
+        if not exported_hash:
+            return False, f"{username} is missing from users.list"
+        if hash_password(token_password) != exported_hash:
+            return False, "token password does not match users.list hash"
+
+        all_servers = list(payload.get("servers", [])) + list(payload.get("censored_zone_servers", []))
+        if not all_servers:
+            return False, "token payload has no servers"
+        for server in all_servers:
+            host = str(server.get("host", "") or "").strip()
+            port = int(server.get("port", 0) or 0)
+            fingerprint = str(server.get("md5_fingerprint", "") or "").strip().lower()
+            if not host or port < 1 or port > 65535:
+                return False, "token payload contains server with invalid host/port"
+            if not fingerprint:
+                return False, "token payload contains server without fingerprint"
+        return True, "ok"
 
     def _upsert_access_key(
         self,
@@ -2334,7 +2396,7 @@ class ControlPlaneService:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, username, password_plain, is_premium
+                SELECT id, username, password_plain, password_hash, is_premium
                 FROM users
                 WHERE id = ?
                 """,
@@ -2342,6 +2404,12 @@ class ControlPlaneService:
             ).fetchone()
             if not row:
                 raise ValueError("Access key not found.")
+
+            if row["password_hash"] != hash_password(row["password_plain"]):
+                conn.execute(
+                    "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+                    (hash_password(row["password_plain"]), to_iso(utcnow()), row["id"]),
+                )
 
             self._upsert_access_key(
                 conn,
@@ -2363,11 +2431,37 @@ class ControlPlaneService:
             ).fetchone()
             if not row:
                 raise ValueError("Access key not found.")
+            valid, reason = self._validate_token_payload(row["username"], row["token_payload"])
+            if not valid:
+                self.sync_fptn()
+                with self.connect() as retry_conn:
+                    retry_row = retry_conn.execute(
+                        """
+                        SELECT users.username, access_keys.token_payload
+                        FROM users
+                        JOIN access_keys ON access_keys.user_id = users.id
+                        WHERE users.id = ?
+                        """,
+                        (user_id,),
+                    ).fetchone()
+                if not retry_row:
+                    raise ValueError("Access key not found after re-sync.")
+                valid, reason = self._validate_token_payload(
+                    retry_row["username"],
+                    retry_row["token_payload"],
+                )
+                if not valid:
+                    raise ValueError(f"Access bundle is inconsistent: {reason}")
+                return {
+                    "username": retry_row["username"],
+                    "token_payload": retry_row["token_payload"],
+                }
             return {"username": row["username"], "token_payload": row["token_payload"]}
 
     def sync_fptn(self) -> None:
         with self.connect() as conn:
             self._enforce_subscription_state(conn)
+            self._repair_user_hashes(conn)
             speed_policy = self._speed_policy(self._get_meta(conn))
             active_users = [
                 dict(row)
