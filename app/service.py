@@ -773,17 +773,6 @@ class ControlPlaneService:
         value = max(1, min(value, self.UNLIMITED_FPTN_BANDWIDTH_MBPS))
         return {"unlimited_profile_mbps": value}
 
-    def _export_policy(self, meta: Optional[dict[str, str]] = None) -> dict[str, int]:
-        source = meta or {}
-        public_limit = max(1, min(int(source.get("max_public_nodes", "8") or 8), 64))
-        premium_limit = max(1, min(int(source.get("max_premium_nodes", "8") or 8), 64))
-        censored_limit = max(1, min(int(source.get("max_censored_nodes", "4") or 4), 64))
-        return {
-            "max_public_nodes": public_limit,
-            "max_premium_nodes": premium_limit,
-            "max_censored_nodes": censored_limit,
-        }
-
     def _effective_bandwidth_mbps(self, user: dict[str, Any], speed_policy: dict[str, Any]) -> int:
         if user.get("speed_mode") == "unlimited":
             return int(speed_policy["unlimited_profile_mbps"])
@@ -953,23 +942,6 @@ class ControlPlaneService:
             )
         with self.connect() as conn:
             self._set_meta(conn, "unlimited_profile_mbps", str(value))
-            conn.commit()
-        self.sync_fptn()
-
-    def update_export_policy(
-        self,
-        max_public_nodes: int,
-        max_premium_nodes: int,
-        max_censored_nodes: int,
-    ) -> None:
-        policy = {
-            "max_public_nodes": max(1, min(int(max_public_nodes), 64)),
-            "max_premium_nodes": max(1, min(int(max_premium_nodes), 64)),
-            "max_censored_nodes": max(1, min(int(max_censored_nodes), 64)),
-        }
-        with self.connect() as conn:
-            for key, value in policy.items():
-                self._set_meta(conn, key, str(value))
             conn.commit()
         self.sync_fptn()
 
@@ -1197,85 +1169,6 @@ class ControlPlaneService:
                 return "warning"
             return "offline"
         return node.get("status", "online")
-
-    def _node_export_health(self, node: dict[str, Any]) -> dict[str, Any]:
-        host = str(node.get("host", "") or "").strip()
-        port = int(node.get("port", 0) or 0)
-        fingerprint = str(node.get("md5_fingerprint", "") or "").strip()
-        if not host:
-            return {"eligible": False, "reason": "missing host", "score": -1000}
-        if port < 1 or port > 65535:
-            return {"eligible": False, "reason": "invalid port", "score": -1000}
-        if not fingerprint:
-            return {"eligible": False, "reason": "missing fingerprint", "score": -900}
-
-        status_display = self._derive_node_status(node)
-        if node.get("source") == "agent":
-            if status_display == "warning":
-                return {"eligible": False, "reason": "stale heartbeat", "score": -500}
-            if status_display != "online":
-                return {"eligible": False, "reason": "offline heartbeat", "score": -500}
-        elif str(node.get("status", "online")) == "offline":
-            return {"eligible": False, "reason": "manual offline", "score": -500}
-
-        last_heartbeat = from_iso(node.get("last_heartbeat_at"))
-        heartbeat_age_penalty = 0.0
-        if last_heartbeat is not None:
-            heartbeat_age_penalty = min((utcnow() - last_heartbeat).total_seconds(), 3600) / 60.0
-        cpu_penalty = float(node.get("cpu_load", 0) or 0)
-        connection_bonus = min(int(node.get("fptn_active_sessions", 0) or 0), 50)
-        score = 1000.0 - heartbeat_age_penalty - cpu_penalty + connection_bonus
-        return {"eligible": True, "reason": "ready", "score": score}
-
-    def _classify_export_nodes(
-        self,
-        rows: list[dict[str, Any]],
-        policy: dict[str, int],
-    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-        annotated_rows: list[dict[str, Any]] = []
-        eligible_by_tier: dict[str, list[dict[str, Any]]] = {
-            "public": [],
-            "premium": [],
-            "censored": [],
-        }
-        for row in rows:
-            health = self._node_export_health(row)
-            annotated = {
-                **row,
-                "export_eligible": bool(health["eligible"]),
-                "export_reason": str(health["reason"]),
-                "export_score": float(health["score"]),
-                "export_selected": False,
-            }
-            annotated_rows.append(annotated)
-            if annotated["export_eligible"] and annotated["tier"] in eligible_by_tier:
-                eligible_by_tier[annotated["tier"]].append(annotated)
-
-        for tier_rows in eligible_by_tier.values():
-            tier_rows.sort(key=lambda item: (-float(item["export_score"]), item["name"]))
-
-        selected_ids: set[str] = set()
-        limits = {
-            "public": policy["max_public_nodes"],
-            "premium": policy["max_premium_nodes"],
-            "censored": policy["max_censored_nodes"],
-        }
-        for tier, limit in limits.items():
-            for item in eligible_by_tier[tier][:limit]:
-                selected_ids.add(item["id"])
-
-        for annotated in annotated_rows:
-            if annotated["id"] in selected_ids:
-                annotated["export_selected"] = True
-                annotated["export_reason"] = "exported"
-            elif annotated["export_eligible"]:
-                annotated["export_reason"] = "excluded by export limit"
-
-        selected_by_tier = {
-            tier: [item for item in eligible_by_tier[tier] if item["id"] in selected_ids]
-            for tier in eligible_by_tier
-        }
-        return annotated_rows, selected_by_tier
 
     def _synthetic_live_sessions(
         self,
@@ -1549,11 +1442,8 @@ class ControlPlaneService:
             meta = self._get_meta(conn)
             node_defaults = self._default_node_config(meta)
             speed_policy = self._speed_policy(meta)
-            export_policy = self._export_policy(meta)
 
         live_metrics = self._load_remote_metrics()
-        annotated_nodes, selected_by_tier = self._classify_export_nodes(nodes, export_policy)
-        nodes = annotated_nodes
 
         user_keys = {key["user_id"]: key for key in access_keys}
         user_identity_map = {
@@ -1651,7 +1541,6 @@ class ControlPlaneService:
                     "active_users": len(node_active_users.get(node["id"], set())),
                     "last_heartbeat_human": format_compact_datetime(node.get("last_heartbeat_at")),
                     "uptime_human": human_duration(node.get("uptime_seconds")),
-                    "export_reason_human": str(node.get("export_reason", "unknown")),
                     "memory_human": (
                         f'{int(node.get("memory_used_mb", 0))} / {int(node.get("memory_total_mb", 0))} MB'
                         if int(node.get("memory_total_mb", 0) or 0) > 0
@@ -1799,13 +1688,6 @@ class ControlPlaneService:
             key=lambda node: (node["status_display"] == "offline", -float(node["cpu_load"])),
         )[:4]
 
-        export_summary = {
-            "public_selected": len(selected_by_tier["public"]),
-            "premium_selected": len(selected_by_tier["premium"]),
-            "censored_selected": len(selected_by_tier["censored"]),
-            "excluded_total": sum(1 for node in node_rows if not node.get("export_selected")),
-        }
-
         return {
             "overview": overview,
             "users": user_rows,
@@ -1830,17 +1712,20 @@ class ControlPlaneService:
             "config_dir": str(self.settings.fptn_config_dir),
             "node_defaults": node_defaults,
             "speed_policy": speed_policy,
-            "export_policy": export_policy,
-            "export_summary": export_summary,
         }
 
     def _current_nodes(self, conn: DatabaseConnection) -> tuple[list[dict], list[dict], list[dict]]:
         rows = [dict(row) for row in conn.execute("SELECT * FROM nodes")]
-        policy = self._export_policy(self._get_meta(conn))
-        _, selected_by_tier = self._classify_export_nodes(rows, policy)
-        public_nodes = selected_by_tier["public"]
-        premium_nodes = selected_by_tier["premium"]
-        censored_nodes = selected_by_tier["censored"]
+        eligible_rows = []
+        for row in rows:
+            host = str(row.get("host", "") or "").strip()
+            port = int(row.get("port", 0) or 0)
+            if not host or port < 1 or port > 65535:
+                continue
+            eligible_rows.append(row)
+        public_nodes = [row for row in eligible_rows if row["tier"] == "public"]
+        premium_nodes = [row for row in eligible_rows if row["tier"] == "premium"]
+        censored_nodes = [row for row in eligible_rows if row["tier"] == "censored"]
         return public_nodes, premium_nodes, censored_nodes
 
     def _upsert_access_key(
