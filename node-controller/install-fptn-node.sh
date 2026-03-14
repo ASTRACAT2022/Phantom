@@ -215,6 +215,51 @@ detect_compose_cmd() {
   exit 1
 }
 
+detect_docker_server_api_version() {
+  local api_version=""
+  api_version="$(docker version --format '{{.Server.APIVersion}}' 2>/dev/null || true)"
+  if [[ -n "${api_version}" ]]; then
+    printf '%s\n' "${api_version}"
+    return
+  fi
+
+  if [[ -S /var/run/docker.sock ]]; then
+    api_version="$(
+      curl -fsS --unix-socket /var/run/docker.sock http://localhost/version 2>/dev/null | \
+        /usr/bin/python3 - <<'PY'
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+api_version = str(payload.get("ApiVersion", "")).strip()
+if api_version:
+    print(api_version)
+PY
+    )"
+  fi
+
+  printf '%s\n' "${api_version}"
+}
+
+configure_docker_api_compat() {
+  if [[ -n "${DOCKER_API_VERSION:-}" ]]; then
+    return
+  fi
+
+  local server_api=""
+  server_api="$(detect_docker_server_api_version)"
+  if [[ -z "${server_api}" ]]; then
+    return
+  fi
+
+  export DOCKER_API_VERSION="${server_api}"
+  echo "Using Docker API compatibility mode: ${DOCKER_API_VERSION}"
+}
+
 apply_network_tuning() {
   if [[ "${SKIP_NET_TUNING}" == "true" ]]; then
     return
@@ -690,6 +735,7 @@ install_dependencies
 ensure_command openssl
 ensure_command docker
 detect_compose_cmd
+configure_docker_api_compat
 apply_network_tuning
 write_compose_file
 ensure_certs
