@@ -99,6 +99,59 @@
             <div class="list-row"><span>Config dir</span><strong class="font-mono text-xs">{{ config_dir }}</strong></div>
           </div>
         </section>
+
+        <section class="panel-card">
+          <h2 class="panel-title">Runtime Consistency</h2>
+          <p class="panel-subtitle">
+            Здесь видно, какая база сейчас реальна для панели и совпадает ли она с экспортом в `users.list`.
+          </p>
+          <div class="mt-4 space-y-3">
+            <div class="list-row"><span>Status</span><strong>{{ "ok" if consistency.ok else "mismatch" }}</strong></div>
+            <div class="list-row"><span>Database backend</span><strong>{{ consistency.database_backend }}</strong></div>
+            <div class="list-row"><span>Database target</span><strong class="font-mono text-xs">{{ consistency.database_target }}</strong></div>
+            <div class="list-row"><span>Active DB users</span><strong>{{ consistency.active_users_count }}</strong></div>
+            <div class="list-row"><span>Exported users.list</span><strong>{{ consistency.exported_users_count }}</strong></div>
+            <div class="list-row"><span>Exported nodes</span><strong>{{ consistency.exported_nodes_count }}</strong></div>
+          </div>
+          <div class="mt-4 space-y-3 text-sm">
+            <div>
+              <span class="text-slate-500">Active DB usernames</span>
+              <div class="mt-1 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-3 font-mono text-xs text-slate-700">
+                {{ consistency.active_usernames|join(', ') if consistency.active_usernames else 'none' }}
+              </div>
+            </div>
+            <div>
+              <span class="text-slate-500">Exported usernames</span>
+              <div class="mt-1 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-3 font-mono text-xs text-slate-700">
+                {{ consistency.exported_usernames|join(', ') if consistency.exported_usernames else 'none' }}
+              </div>
+            </div>
+            <div>
+              <span class="text-slate-500">Missing in export</span>
+              <div class="mt-1 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-3 font-mono text-xs text-slate-700">
+                {{ consistency.missing_in_export|join(', ') if consistency.missing_in_export else 'ok' }}
+              </div>
+            </div>
+            <div>
+              <span class="text-slate-500">Orphaned in export</span>
+              <div class="mt-1 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-3 font-mono text-xs text-slate-700">
+                {{ consistency.orphaned_in_export|join(', ') if consistency.orphaned_in_export else 'ok' }}
+              </div>
+            </div>
+            <div>
+              <span class="text-slate-500">Hash mismatches</span>
+              <div class="mt-1 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-3 font-mono text-xs text-slate-700">
+                {{ consistency.hash_mismatches|join(', ') if consistency.hash_mismatches else 'ok' }}
+              </div>
+            </div>
+            <div>
+              <span class="text-slate-500">Invalid access keys</span>
+              <div class="mt-1 rounded-2xl border border-slate-300/70 bg-slate-50/80 p-3 font-mono text-xs text-slate-700">
+                {{ consistency.invalid_access_keys|join(', ') if consistency.invalid_access_keys else 'ok' }}
+              </div>
+            </div>
+          </div>
+        </section>
       </section>
     </section>
   </div>

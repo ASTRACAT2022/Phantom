@@ -1440,6 +1440,7 @@ class ControlPlaneService:
                 dict(row) for row in conn.execute("SELECT * FROM access_keys ORDER BY rotated_at DESC")
             ]
             meta = self._get_meta(conn)
+            consistency = self._consistency_report(conn)
             node_defaults = self._default_node_config(meta)
             speed_policy = self._speed_policy(meta)
 
@@ -1608,6 +1609,10 @@ class ControlPlaneService:
         loaded_nodes = [node["name"] for node in node_rows if node["cpu_load"] >= 75]
         if loaded_nodes:
             alerts.append(f"High CPU load on: {', '.join(loaded_nodes)}.")
+        if not consistency["ok"]:
+            alerts.append(
+                "Runtime consistency issue detected between active database, exported users.list or access keys. Open Settings for details."
+            )
         if not alerts:
             alerts.append("Infrastructure looks stable. No urgent incidents detected.")
 
@@ -1710,6 +1715,7 @@ class ControlPlaneService:
             "last_sync_at": format_datetime(meta.get("last_sync_at")),
             "metrics_status": live_metrics,
             "config_dir": str(self.settings.fptn_config_dir),
+            "consistency": consistency,
             "node_defaults": node_defaults,
             "speed_policy": speed_policy,
         }
@@ -1789,6 +1795,110 @@ class ControlPlaneService:
             if not fingerprint:
                 return False, "token payload contains server without fingerprint"
         return True, "ok"
+
+    def _read_exported_users(self) -> dict[str, dict[str, Any]]:
+        users_list_path = self.settings.fptn_config_dir / "users.list"
+        exported: dict[str, dict[str, Any]] = {}
+        if not users_list_path.exists():
+            return exported
+        for raw_line in users_list_path.read_text(encoding="utf-8").splitlines():
+            parts = raw_line.strip().split()
+            if len(parts) < 4:
+                continue
+            username, password_hash, bandwidth_mbps, premium_flag = parts[:4]
+            exported[username] = {
+                "password_hash": password_hash,
+                "bandwidth_mbps": int(bandwidth_mbps),
+                "is_premium": premium_flag == "1",
+            }
+        return exported
+
+    def _read_exported_nodes(self) -> list[dict[str, Any]]:
+        nodes: list[dict[str, Any]] = []
+        for file_name, tier in (
+            ("servers.json", "public"),
+            ("premium_servers.json", "premium"),
+            ("servers_censored_zone.json", "censored"),
+        ):
+            path = self.settings.fptn_config_dir / file_name
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            for item in payload:
+                nodes.append(
+                    {
+                        "name": str(item.get("name", "") or ""),
+                        "host": str(item.get("host", "") or ""),
+                        "port": int(item.get("port", 0) or 0),
+                        "tier": tier,
+                        "md5_fingerprint": str(item.get("md5_fingerprint", "") or "").lower(),
+                    }
+                )
+        return nodes
+
+    def _consistency_report(self, conn: DatabaseConnection) -> dict[str, Any]:
+        active_users = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT username, password_hash, is_premium, bandwidth_mbps
+                FROM users
+                WHERE status = 'active'
+                ORDER BY username ASC
+                """
+            )
+        ]
+        exported_users = self._read_exported_users()
+        active_usernames = [row["username"] for row in active_users]
+        exported_usernames = sorted(exported_users.keys())
+
+        missing_in_export = sorted(set(active_usernames) - set(exported_usernames))
+        orphaned_in_export = sorted(set(exported_usernames) - set(active_usernames))
+        hash_mismatches = sorted(
+            row["username"]
+            for row in active_users
+            if exported_users.get(row["username"], {}).get("password_hash") != row["password_hash"]
+        )
+
+        access_key_rows = conn.execute(
+            """
+            SELECT users.username, access_keys.token_payload
+            FROM access_keys
+            JOIN users ON users.id = access_keys.user_id
+            WHERE users.status = 'active'
+            ORDER BY users.username ASC
+            """
+        ).fetchall()
+        invalid_access_keys: list[str] = []
+        for row in access_key_rows:
+            valid, _ = self._validate_token_payload(row["username"], row["token_payload"])
+            if not valid:
+                invalid_access_keys.append(row["username"])
+
+        exported_nodes = self._read_exported_nodes()
+        exported_node_names = sorted(node["name"] for node in exported_nodes if node["name"])
+
+        database_target = self.settings.database_url if self.database_backend == "postgres" else str(self.settings.database_path)
+
+        ok = not (missing_in_export or orphaned_in_export or hash_mismatches or invalid_access_keys)
+        return {
+            "ok": ok,
+            "database_backend": self.database_backend,
+            "database_target": database_target,
+            "active_users_count": len(active_users),
+            "exported_users_count": len(exported_users),
+            "active_usernames": active_usernames,
+            "exported_usernames": exported_usernames,
+            "missing_in_export": missing_in_export,
+            "orphaned_in_export": orphaned_in_export,
+            "hash_mismatches": hash_mismatches,
+            "invalid_access_keys": invalid_access_keys,
+            "exported_nodes_count": len(exported_nodes),
+            "exported_node_names": exported_node_names,
+        }
 
     def _upsert_access_key(
         self,
