@@ -44,7 +44,7 @@ usage() {
 Phantom full FPTN node installer
 
 This script prepares Docker, deploys FPTN on the selected port, generates a certificate,
-and then installs Phantom node-controller so the node appears in the admin panel.
+validates metrics and TCP readiness, and then installs Phantom node-controller so the node appears in the admin panel.
 
 Usage:
   curl -fsSL ${RAW_BASE}/install-fptn-node.sh | sudo bash -s -- --panel-url http://PANEL_IP:8000 --shared-token TOKEN --node-host NODE_IP [options]
@@ -305,6 +305,70 @@ start_fptn() {
   "${COMPOSE_CMD[@]}" -f "${FPTN_DIR}/docker-compose.yml" up -d
 }
 
+wait_for_local_tcp() {
+  local port="$1"
+  local label="$2"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if /usr/bin/python3 - "${port}" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+try:
+    with socket.create_connection(("127.0.0.1", port), timeout=1):
+        raise SystemExit(0)
+except Exception:
+    raise SystemExit(1)
+PY
+    then
+      echo "Validated ${label} on 127.0.0.1:${port}."
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Timed out waiting for ${label} on 127.0.0.1:${port}." >&2
+  return 1
+}
+
+wait_for_metrics_payload() {
+  local url="$1"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if curl -fsS "${url}" 2>/dev/null | grep -Eq 'fptn_active_sessions|fptn_user_'; then
+      echo "Validated FPTN metrics endpoint ${url}."
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Timed out waiting for FPTN metrics at ${url}." >&2
+  return 1
+}
+
+wait_for_panel_health() {
+  local url="$1"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if curl -fsS "${url}/health" 2>/dev/null | grep -q '"status":"ok"'; then
+      echo "Validated panel health at ${url}/health."
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Timed out waiting for panel health at ${url}/health." >&2
+  return 1
+}
+
+verify_fptn_stack() {
+  local metrics_url="http://127.0.0.1:${FPTN_PROXY_PORT}/api/v1/metrics/${PROMETHEUS_SECRET_ACCESS_KEY}"
+  wait_for_local_tcp "${NODE_PORT}" "public FPTN port"
+  wait_for_local_tcp "${FPTN_PROXY_PORT}" "local metrics proxy"
+  wait_for_metrics_payload "${metrics_url}"
+}
+
 open_firewall() {
   if [[ "${OPEN_UFW}" != "true" ]]; then
     return
@@ -348,6 +412,7 @@ sync_local_panel_with_fptn() {
   set_panel_env_var "FPTN_PROMETHEUS_METRICS_URL" "${local_metrics_url}"
   set_panel_env_var "FPTN_PROMETHEUS_INSECURE_TLS" "false"
   systemctl restart "${PANEL_SERVICE_NAME}"
+  wait_for_panel_health "${PANEL_URL}"
 
   (
     set -a
@@ -394,6 +459,7 @@ install_node_controller() {
     --node-port "${NODE_PORT}"
     --region "${NODE_REGION}"
     --cert-path "${FPTN_CONFIG_DIR}/server.crt"
+    --config-dir "${FPTN_CONFIG_DIR}"
     --metrics-url "${effective_metrics_url}"
   )
 
@@ -588,6 +654,7 @@ detect_compose_cmd
 write_compose_file
 ensure_certs
 start_fptn
+verify_fptn_stack
 open_firewall
 sync_local_panel_with_fptn
 

@@ -34,6 +34,7 @@ NODE_PORT="${FPTN_NODE_PORT:-}"
 NODE_REGION="${FPTN_NODE_REGION:-}"
 NODE_TIER="${FPTN_NODE_TIER:-}"
 CERT_PATH="${FPTN_CERT_PATH:-/etc/fptn/server.crt}"
+FPTN_CONFIG_DIR="${FPTN_CONFIG_DIR:-/etc/fptn}"
 METRICS_URL="${LOCAL_FPTN_METRICS_URL:-}"
 NET_INTERFACE="${PHANTOM_NET_INTERFACE:-}"
 HEARTBEAT_INTERVAL="${PHANTOM_HEARTBEAT_INTERVAL:-30}"
@@ -62,6 +63,7 @@ Optional:
   --region REGION            Node region label, optional: panel default -> Unknown fallback
   --tier public|premium|censored, optional: panel default -> public fallback
   --cert-path PATH           Path to FPTN server certificate, default: /etc/fptn/server.crt
+  --config-dir PATH          FPTN config dir for self-check, default: /etc/fptn
   --metrics-url URL          Local FPTN metrics endpoint
   --interface IFACE          Network interface, default: auto-detect from route
   --heartbeat-interval SEC   Default: 30
@@ -128,6 +130,40 @@ deregister_existing_node() {
   exit 1
 }
 
+run_agent_once_with_retries() {
+  local attempt=1
+  local max_attempts=12
+
+  while (( attempt <= max_attempts )); do
+    if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --once >/tmp/phantom-node-once.json 2>/tmp/phantom-node-once.err; then
+      echo "Validated node heartbeat against panel."
+      return 0
+    fi
+    if (( attempt < max_attempts )); then
+      echo "Heartbeat validation failed; retrying (${attempt}/${max_attempts})..." >&2
+      sleep 2
+    fi
+    ((attempt++))
+  done
+
+  echo "Node heartbeat validation failed." >&2
+  cat /tmp/phantom-node-once.err >&2 || true
+  exit 1
+}
+
+run_self_check_or_fail() {
+  local output_file="/tmp/phantom-node-self-check.json"
+  if /usr/bin/python3 "${INSTALL_DIR}/agent.py" --self-check >"${output_file}" 2>/tmp/phantom-node-self-check.err; then
+    echo "Validated local FPTN stack and node-controller self-check."
+    return 0
+  fi
+
+  echo "Node self-check failed." >&2
+  cat /tmp/phantom-node-self-check.err >&2 || true
+  cat "${output_file}" >&2 || true
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --panel-url)
@@ -176,6 +212,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cert-path)
       CERT_PATH="$2"
+      shift 2
+      ;;
+    --config-dir)
+      FPTN_CONFIG_DIR="$2"
       shift 2
       ;;
     --metrics-url)
@@ -293,6 +333,7 @@ fi
   write_env_var "FPTN_NODE_REGION" "${NODE_REGION}"
   write_env_var "FPTN_NODE_TIER" "${NODE_TIER}"
   write_env_var "FPTN_CERT_PATH" "${CERT_PATH}"
+  write_env_var "FPTN_CONFIG_DIR" "${FPTN_CONFIG_DIR}"
   write_env_var "LOCAL_FPTN_METRICS_URL" "${METRICS_URL}"
   write_env_var "PHANTOM_NET_INTERFACE" "${NET_INTERFACE}"
   write_env_var "PHANTOM_HEARTBEAT_INTERVAL" "${HEARTBEAT_INTERVAL}"
@@ -316,6 +357,8 @@ systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 
 sleep 2
+run_agent_once_with_retries
+run_self_check_or_fail
 
 echo
 echo "Phantom node-controller deployed."

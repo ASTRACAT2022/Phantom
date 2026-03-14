@@ -32,6 +32,7 @@ Forwarded options:
   --region REGION
   --tier public|premium|censored
   --cert-path PATH
+  --config-dir PATH
   --metrics-url URL
   --interface IFACE
   --heartbeat-interval SEC

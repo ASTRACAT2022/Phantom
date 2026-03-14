@@ -79,6 +79,7 @@ sudo bash -s -- \
 - настраивает upstream DNS для `FPTN`;
 - открывает порт в `ufw`, если он активен;
 - ставит `node-controller` и сразу подключает ноду к панели.
+- валидирует `8443`, metrics endpoint, heartbeat в панель и `users.list` before success.
 
 Если DNS явно не передавать, full-stack installer по умолчанию использует `77.239.113.0` и `108.165.164.201`.
 
@@ -138,6 +139,7 @@ sudo bash auto-deploy.sh \
 - ставит `systemd` unit;
 - делает `daemon-reload`;
 - включает сервис в автозапуск;
+- прогоняет post-deploy heartbeat и локальный self-check;
 - сразу запускает сервис.
 
 Если не передавать `--agent-id`, `--node-name`, `--node-host` или `--interface`, скрипт постарается определить их автоматически.

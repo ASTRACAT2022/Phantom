@@ -56,6 +56,7 @@ class AgentConfig:
     region: str
     tier: str
     cert_path: str
+    fptn_config_dir: str
     metrics_url: str
     interface: str
     interval_seconds: int
@@ -189,16 +190,28 @@ def fingerprint_from_cert(cert_path: str) -> str:
         return ""
 
 
+def fetch_metrics_payload(metrics_url: str, timeout: int) -> str:
+    if not metrics_url:
+        return ""
+    request_kwargs = {"timeout": timeout}
+    parsed_url = urlsplit(metrics_url)
+    if parsed_url.scheme == "https" and (parsed_url.hostname or "").strip().lower() in {"127.0.0.1", "localhost", "::1"}:
+        request_kwargs["context"] = ssl._create_unverified_context()
+    with urlopen(metrics_url, **request_kwargs) as response:
+        return response.read().decode("utf-8")
+
+
+def metrics_look_like_fptn(payload: str) -> bool:
+    if not payload:
+        return False
+    return "fptn_active_sessions" in payload or "fptn_user_" in payload
+
+
 def read_fptn_active_sessions(metrics_url: str, timeout: int) -> int:
     if not metrics_url:
         return 0
     try:
-        request_kwargs = {"timeout": timeout}
-        parsed_url = urlsplit(metrics_url)
-        if parsed_url.scheme == "https" and (parsed_url.hostname or "").strip().lower() in {"127.0.0.1", "localhost", "::1"}:
-            request_kwargs["context"] = ssl._create_unverified_context()
-        with urlopen(metrics_url, **request_kwargs) as response:
-            payload = response.read().decode("utf-8")
+        payload = fetch_metrics_payload(metrics_url, timeout)
     except Exception:
         return 0
     for line in payload.splitlines():
@@ -294,6 +307,7 @@ def build_config() -> AgentConfig:
         region=raw_region or panel_defaults.get("region", "Unknown"),
         tier=raw_tier or panel_defaults.get("tier", "public"),
         cert_path=os.getenv("FPTN_CERT_PATH", "/etc/fptn/server.crt"),
+        fptn_config_dir=os.getenv("FPTN_CONFIG_DIR", "/etc/fptn"),
         metrics_url=os.getenv("LOCAL_FPTN_METRICS_URL", ""),
         interface=os.getenv("PHANTOM_NET_INTERFACE", ""),
         interval_seconds=int(os.getenv("PHANTOM_HEARTBEAT_INTERVAL", "30")),
@@ -401,6 +415,80 @@ def build_payload(config: AgentConfig, collector: LinuxCollector) -> dict:
     }
 
 
+def _panel_config_check(config: AgentConfig) -> tuple[bool, str]:
+    try:
+        if config.transport == "grpc":
+            payload = fetch_panel_defaults_grpc(config.grpc_target, config.shared_token, config.request_timeout)
+            return True, f"gRPC defaults loaded from {config.grpc_target} ({payload.get('host', 'n/a')}:{payload.get('port', 'n/a')})"
+        payload = fetch_panel_defaults_http(config.panel_url, config.shared_token, config.request_timeout)
+        return True, f"HTTP defaults loaded from {config.panel_url} ({payload.get('host', 'n/a')}:{payload.get('port', 'n/a')})"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _tcp_check(host: str, port: int, timeout: int) -> tuple[bool, str]:
+    try:
+        with socket.create_connection((host, port), timeout=max(timeout, 1)):
+            return True, f"TCP connect ok: {host}:{port}"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _metrics_check(config: AgentConfig) -> tuple[bool, str]:
+    if not config.metrics_url:
+        return False, "LOCAL_FPTN_METRICS_URL is empty"
+    try:
+        payload = fetch_metrics_payload(config.metrics_url, config.request_timeout)
+    except Exception as exc:
+        return False, str(exc)
+    if not metrics_look_like_fptn(payload):
+        return False, "metrics endpoint returned non-FPTN payload"
+    return True, f"metrics ok: {config.metrics_url}"
+
+
+def _users_list_check(config: AgentConfig) -> tuple[bool, str]:
+    users_path = Path(config.fptn_config_dir) / "users.list"
+    if not users_path.exists():
+        return False, f"missing {users_path}"
+    try:
+        lines = [
+            line.strip()
+            for line in users_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except Exception as exc:
+        return False, str(exc)
+    if not lines:
+        return False, f"{users_path} is empty"
+    return True, f"{len(lines)} active user(s) in {users_path}"
+
+
+def build_self_check(config: AgentConfig, collector: LinuxCollector) -> dict:
+    fingerprint = fingerprint_from_cert(config.cert_path)
+    panel_ok, panel_message = _panel_config_check(config)
+    port_ok, port_message = _tcp_check("127.0.0.1", config.node_port, config.request_timeout)
+    metrics_ok, metrics_message = _metrics_check(config)
+    users_ok, users_message = _users_list_check(config)
+    checks = {
+        "panel": {"ok": panel_ok, "message": panel_message},
+        "certificate": {
+            "ok": bool(fingerprint),
+            "message": f"fingerprint={fingerprint}" if fingerprint else f"certificate unreadable: {config.cert_path}",
+        },
+        "public_port": {"ok": port_ok, "message": port_message},
+        "metrics": {"ok": metrics_ok, "message": metrics_message},
+        "users_list": {"ok": users_ok, "message": users_message},
+    }
+    payload = build_payload(config, collector)
+    ok = all(item["ok"] for item in checks.values())
+    return {
+        "ok": ok,
+        "checks": checks,
+        "node": payload["node"],
+        "system": payload["system"],
+    }
+
+
 def run_once(config: AgentConfig, collector: LinuxCollector) -> int:
     payload = build_payload(config, collector)
     post_heartbeat(config, payload)
@@ -412,6 +500,12 @@ def run_deregister(config: AgentConfig, agent_id: str) -> int:
     payload = deregister_node(config, agent_id)
     print(json.dumps(payload, indent=2))
     return 0
+
+
+def run_self_check(config: AgentConfig, collector: LinuxCollector) -> int:
+    payload = build_self_check(config, collector)
+    print(json.dumps(payload, indent=2))
+    return 0 if payload["ok"] else 1
 
 
 def run_forever(config: AgentConfig, collector: LinuxCollector) -> int:
@@ -436,6 +530,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Phantom lightweight node-controller for FPTN.")
     parser.add_argument("--once", action="store_true", help="Send one heartbeat and exit.")
     parser.add_argument(
+        "--self-check",
+        action="store_true",
+        help="Run local health checks for panel, cert, metrics, users.list and TCP port.",
+    )
+    parser.add_argument(
         "--deregister-agent-id",
         default="",
         help="Remove an existing node registration by agent_id and exit.",
@@ -449,6 +548,8 @@ def main() -> int:
     collector = LinuxCollector(config.interface)
     if args.once:
         return run_once(config, collector)
+    if args.self_check:
+        return run_self_check(config, collector)
     return run_forever(config, collector)
 
 
