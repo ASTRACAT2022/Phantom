@@ -39,7 +39,8 @@ SKIP_NET_TUNING="false"
 TMP_DIR=""
 PANEL_ENV_FILE="/etc/phantom-control-plane.env"
 PANEL_SERVICE_NAME="phantom-control-plane.service"
-PERF_SYSCTL_FILE="/etc/sysctl.d/98-phantom-fptn-performance.conf"
+# Intentionally sorts after local `99-*.conf` profiles so FPTN tuning wins.
+PERF_SYSCTL_FILE="/etc/sysctl.d/99-z-phantom-fptn-performance.conf"
 
 usage() {
   cat <<EOF
@@ -84,7 +85,7 @@ Optional:
   --replace-agent-id ID      Explicit old agent id to remove
   --fptn-only                Deploy only FPTN, skip node-controller install
   --skip-docker-install      Do not apt install Docker / openssl
-  --skip-net-tuning          Do not apply Phantom network performance sysctl profile
+  --skip-net-tuning          Do not apply Phantom high-priority network performance sysctl profile
   --help                     Show this help
 EOF
 }
