@@ -16,7 +16,7 @@
             heartbeat: {{ node.last_heartbeat_human }} · uptime: {{ node.uptime_human }}
           </p>
         </div>
-        <form action="/actions/nodes/{{ node.id }}/delete" method="post" onsubmit="return confirm('Удалить узел {{ node.name }}?')">
+        <form action="/actions/nodes/{{ node.id }}/delete" method="post" onsubmit="return confirm('Удалить узел {{ node.name }}? Это необратимо.')">
           <button class="btn btn-danger" type="submit">Удалить</button>
         </form>
       </div>

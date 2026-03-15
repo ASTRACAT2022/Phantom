@@ -1058,6 +1058,30 @@ class ControlPlaneService:
         )
         conn.commit()
 
+    def delete_node_by_agent_id(self, agent_id: str) -> bool:
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM nodes WHERE agent_id = ?", (agent_id,)
+            ).fetchone()
+            if not existing:
+                return False
+            conn.execute("DELETE FROM nodes WHERE agent_id = ?", (agent_id,))
+            conn.commit()
+        self.sync_fptn()
+        return True
+
+    def delete_node_by_id(self, node_id: str) -> bool:
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM nodes WHERE id = ?", (node_id,)
+            ).fetchone()
+            if not existing:
+                return False
+            conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+            conn.commit()
+        self.sync_fptn()
+        return True
+
     def _record_traffic_sample(
         self,
         ingress_mbps: float,

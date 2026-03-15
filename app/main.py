@@ -592,6 +592,17 @@ async def actions_users_bulk_unlimited(request: Request) -> RedirectResponse:
         return flash_redirect(request, "/settings", f"Ошибка: {exc}", level="error")
 
 
+@app.post("/actions/nodes/{node_id}/delete")
+async def delete_node(request: Request, node_id: str) -> RedirectResponse:
+    verify_admin(request)
+    try:
+        if service.delete_node_by_id(node_id):
+            return flash_redirect(request, "/nodes", "Node deleted.")
+        return flash_redirect(request, "/nodes", "Node not found.", level="error")
+    except Exception as exc:
+        return flash_redirect(request, "/nodes", str(exc), level="error")
+
+
 @app.post("/api/node-agent/heartbeat")
 async def node_agent_heartbeat(
     request: Request,
