@@ -364,7 +364,6 @@ services:
     environment:
       FPTN_HOST: "fptn-server"
       FPTN_PORT: "443"
-    command: /usr/bin/http-proxy --listen-port 8080
 EOF
 }
 
