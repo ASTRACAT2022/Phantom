@@ -605,14 +605,14 @@ class ControlPlaneService:
             )
 
         seed_users = [
-            ("opsalpha", 120, "unlimited", True, 45, "Core admin team"),
-            ("client01", 40, "limited", False, 30, "Starter cohort"),
-            ("client02", 25, "limited", False, 14, "Burst traffic"),
-            ("streampro", 90, "unlimited", True, 90, "High throughput"),
+            ("opsalpha", 0, "unlimited", True, 45, "Core admin team"),
+            ("client01", 0, "unlimited", False, 30, "Starter cohort"),
+            ("client02", 0, "unlimited", False, 14, "Burst traffic"),
+            ("streampro", 0, "unlimited", True, 90, "High throughput"),
             ("travelkit", 30, "limited", False, 3, "Expiring soon"),
             ("edgecase", 15, "limited", False, -2, "Expired plan"),
-            ("latencyx", 55, "unlimited", True, 60, "Premium gaming"),
-            ("auditbox", 20, "limited", False, 12, "Business profile"),
+            ("latencyx", 0, "unlimited", True, 60, "Premium gaming"),
+            ("auditbox", 0, "unlimited", False, 12, "Business profile"),
         ]
 
         public_nodes = [node for node in nodes if node["tier"] == "public"]
@@ -790,7 +790,10 @@ class ControlPlaneService:
 
     def _effective_bandwidth_mbps(self, user: dict[str, Any], speed_policy: dict[str, Any]) -> int:
         if user.get("speed_mode") == "unlimited" or int(user.get("bandwidth_mbps", 0) or 0) == 0:
-            return int(speed_policy["unlimited_profile_mbps"])
+            policy_value = int(speed_policy["unlimited_profile_mbps"])
+            # If policy is 0, it means true unlimited.
+            # If policy is > 0 (e.g. 2047), it acts as a cap.
+            return policy_value
         return int(user.get("bandwidth_mbps", 0) or 0)
 
     def _normalize_speed_mode(self, speed_mode: Optional[str]) -> str:
