@@ -586,7 +586,7 @@ async def actions_users_bulk_unlimited(request: Request) -> RedirectResponse:
         return flash_redirect(
             request,
             "/settings",
-            "Все пользователи успешно переведены на тариф Unlimited (0 Mbps).",
+            "Все пользователи успешно переведены на тариф 1000 Mbps.",
         )
     except Exception as exc:
         return flash_redirect(request, "/settings", f"Ошибка: {exc}", level="error")

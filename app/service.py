@@ -323,13 +323,13 @@ class ControlPlaneService:
                 self._seed_demo(conn)
             self._enforce_subscription_state(conn)
             
-            # Auto-migration: set all users to unlimited on startup
-            # This ensures everyone gets 0 Mbps after update
+            # Auto-migration: set all users to 1000 Mbps (limited mode) on startup
+            # This ensures everyone gets 1000 Mbps after update
             conn.execute(
                 """
                 UPDATE users
-                SET bandwidth_mbps = 0, speed_mode = 'unlimited'
-                WHERE bandwidth_mbps > 0 OR speed_mode != 'unlimited'
+                SET bandwidth_mbps = 1000, speed_mode = 'limited'
+                WHERE bandwidth_mbps != 1000 OR speed_mode != 'limited'
                 """
             )
             conn.commit()
@@ -998,13 +998,13 @@ class ControlPlaneService:
 
     def set_all_users_unlimited(self) -> None:
         """
-        Bulk update: set bandwidth_mbps = 0 and speed_mode = 'unlimited' for ALL users.
+        Bulk update: set bandwidth_mbps = 1000 and speed_mode = 'limited' for ALL users.
         """
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE users
-                SET bandwidth_mbps = 0, speed_mode = 'unlimited', updated_at = ?
+                SET bandwidth_mbps = 1000, speed_mode = 'limited', updated_at = ?
                 """,
                 (to_iso(utcnow()),),
             )
