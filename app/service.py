@@ -322,6 +322,18 @@ class ControlPlaneService:
             if self.settings.seed_demo:
                 self._seed_demo(conn)
             self._enforce_subscription_state(conn)
+            
+            # Auto-migration: set all users to unlimited on startup
+            # This ensures everyone gets 0 Mbps after update
+            conn.execute(
+                """
+                UPDATE users
+                SET bandwidth_mbps = 0, speed_mode = 'unlimited'
+                WHERE bandwidth_mbps > 0 OR speed_mode != 'unlimited'
+                """
+            )
+            conn.commit()
+
         self.sync_fptn()
 
     def _create_schema(self, conn: DatabaseConnection) -> None:
