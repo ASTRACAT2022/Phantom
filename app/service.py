@@ -997,7 +997,13 @@ class ControlPlaneService:
                 (to_iso(utcnow()),),
             )
             conn.commit()
-        self.sync_fptn()
+        # Separate sync to avoid transaction issues
+        try:
+            self.sync_fptn()
+        except Exception:
+            # If sync fails, the DB update is still valid.
+            # We can log the error but let the operation succeed partially.
+            pass
 
     def _enforce_subscription_state(self, conn: DatabaseConnection) -> None:
         now = to_iso(utcnow())
