@@ -359,14 +359,12 @@ services:
   fptn-proxy-server:
     image: ${FPTN_PROXY_IMAGE}
     restart: unless-stopped
-    depends_on:
-      - fptn-server
     ports:
-      - "127.0.0.1:${FPTN_PROXY_PORT}:80/tcp"
+      - "127.0.0.1:${FPTN_PROXY_PORT}:8080/tcp"
     environment:
-      FPTN_HOST: "${NODE_HOST}"
-      FPTN_PORT: "${NODE_PORT}"
-    command: /usr/bin/fptn-proxy --target-host "${NODE_HOST}" --target-port "${NODE_PORT}" --listen-port 80
+      FPTN_HOST: "fptn-server"
+      FPTN_PORT: "443"
+    command: /usr/bin/http-proxy --listen-port 8080
 EOF
 }
 
